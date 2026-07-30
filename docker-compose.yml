@@ -1,0 +1,31 @@
+# ═══════════════════════════════════════════
+# GLM Agent Docker 部署
+# 启动: docker-compose up -d
+# 查看日志: docker-compose logs -f
+# ═══════════════════════════════════════════
+
+version: "3.8"
+
+services:
+  glm-agent:
+    build: .
+    container_name: glm-agent
+    ports:
+      - "${PORT:-8000}:8000"
+    environment:
+      - ZHIPUAI_API_KEY=${ZHIPUAI_API_KEY}
+      - ZHIPUAI_MODEL=${ZHIPUAI_MODEL:-glm-4-flash}
+      - SERVICE_API_KEY=${SERVICE_API_KEY:-}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - RATE_LIMIT_PER_MINUTE=${RATE_LIMIT_PER_MINUTE:-60}
+      - CORS_ORIGINS=${CORS_ORIGINS:-*}
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

@@ -1,0 +1,25 @@
+# ═══════════════════════════════════════════
+# Render 免费云部署配置
+# 1. 把代码推送到 GitHub
+# 2. 在 render.com 注册 → New Web Service → 连接仓库
+# 3. Render 自动读取此文件完成部署
+# ═══════════════════════════════════════════
+
+services:
+  - type: web
+    name: xingyuan-backend
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: ZHIPUAI_API_KEY
+        sync: false  # 在 Render 面板手动填入
+      - key: SERVICE_API_KEY
+        sync: false
+      - key: LOG_LEVEL
+        value: INFO
+      - key: RATE_LIMIT_PER_MINUTE
+        value: "60"
+      - key: CORS_ORIGINS
+        value: "*"
+    autoDeploy: true

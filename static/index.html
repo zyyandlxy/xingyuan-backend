@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no"/>
+<meta name="theme-color" content="#0f172a"/>
+<meta name="apple-mobile-web-app-capable" content="yes"/>
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+<meta name="apple-mobile-web-app-title" content="GLM Agent"/>
+<meta name="description" content="GLM AI Agent — 你的专属智能助手"/>
+<link rel="manifest" href="/manifest.json"/>
+<link rel="apple-touch-icon" href="/icon-192.png"/>
+<title>GLM Agent</title>
+<style>
+/* ═══════════════════════════════════════════
+   CSS Variables & Reset
+   ═══════════════════════════════════════════ */
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg: #0f172a; --bg2: #1e293b; --bg3: #334155;
+  --text: #f1f5f9; --text2: #94a3b8; --text3: #64748b;
+  --accent: #6366f1; --accent2: #818cf8;
+  --danger: #ef4444; --success: #22c55e;
+  --radius: 16px; --radius-sm: 10px;
+  --safe-bottom: env(safe-area-inset-bottom, 12px);
+}
+@media(prefers-color-scheme:light){
+  :root{--bg:#f8fafc;--bg2:#e2e8f0;--bg3:#cbd5e1;--text:#0f172a;--text2:#475569;--text3:#94a3b8}
+}
+html,body{height:100%;overflow:hidden}
+body{
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: var(--bg); color: var(--text);
+  display:flex; flex-direction:column;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none; -webkit-user-select: none;
+}
+
+/* ═══════════════════════════════════════════
+   Header
+   ═══════════════════════════════════════════ */
+header{
+  display:flex; align-items:center; gap:12px; padding:12px 16px;
+  background: var(--bg2); border-bottom:1px solid var(--bg3);
+  min-height: 56px; flex-shrink:0;
+}
+header h1{font-size:18px;font-weight:700;flex:1}
+header .logo{width:32px;height:32px;border-radius:8px;background:linear-gradient(135deg,var(--accent),var(--accent2));
+  display:flex;align-items:center;justify-content:center;font-size:18px}
+.btn-icon{
+  width:40px;height:40px;border-radius:50%;border:none;background:transparent;
+  color:var(--text2);font-size:20px;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;
+  transition: background .15s;
+}
+.btn-icon:hover,.btn-icon:active{background:var(--bg3)}
+
+/* ═══════════════════════════════════════════
+   Sidebar
+   ═══════════════════════════════════════════ */
+.sidebar{
+  position:fixed;top:0;left:0;width:300px;max-width:85vw;height:100%;
+  background:var(--bg2);z-index:100;transform:translateX(-100%);
+  transition:transform .25s cubic-bezier(.4,0,.2,1);
+  display:flex;flex-direction:column;box-shadow:4px 0 24px rgba(0,0,0,.3);
+}
+.sidebar.open{transform:translateX(0)}
+.sidebar-header{
+  display:flex;align-items:center;gap:12px;padding:16px;border-bottom:1px solid var(--bg3);
+}
+.sidebar-header h2{flex:1;font-size:16px}
+.sidebar-list{flex:1;overflow-y:auto;padding:8px}
+.sidebar-item{
+  padding:12px;border-radius:var(--radius-sm);cursor:pointer;
+  display:flex;align-items:center;gap:8px;margin-bottom:4px;
+  transition:background .15s;
+}
+.sidebar-item:hover,.sidebar-item.active{background:var(--bg3)}
+.sidebar-item .title{flex:1;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sidebar-item .count{font-size:12px;color:var(--text3)}
+.sidebar-item .del{opacity:0;color:var(--danger);font-size:16px;padding:4px}
+.sidebar-item:hover .del{opacity:1}
+.new-chat-btn{
+  margin:12px;padding:12px;border-radius:var(--radius-sm);border:1px dashed var(--bg3);
+  background:transparent;color:var(--accent2);font-size:14px;cursor:pointer;
+  transition:background .15s;display:flex;align-items:center;justify-content:center;gap:8px;
+}
+.new-chat-btn:hover{background:var(--bg3)}
+.overlay{
+  position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:99;
+  opacity:0;pointer-events:none;transition:opacity .25s;
+}
+.overlay.show{opacity:1;pointer-events:auto}
+
+/* ═══════════════════════════════════════════
+   Messages
+   ═══════════════════════════════════════════ */
+.messages{
+  flex:1;overflow-y:auto;padding:16px;
+  display:flex;flex-direction:column;gap:16px;
+  scroll-behavior:smooth;
+}
+.msg{display:flex;gap:10px;max-width:100%;animation:fadeIn .3s ease}
+@keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+.msg.user{flex-direction:row-reverse}
+.msg-avatar{
+  width:34px;height:34px;border-radius:50%;flex-shrink:0;
+  display:flex;align-items:center;justify-content:center;font-size:16px;
+}
+.msg.assistant .msg-avatar{background:linear-gradient(135deg,var(--accent),var(--accent2))}
+.msg.user .msg-avatar{background:var(--bg3)}
+.msg-bubble{
+  padding:12px 16px;border-radius:var(--radius);max-width:80%;
+  font-size:15px;line-height:1.55;word-break:break-word;
+  white-space:pre-wrap;
+}
+.msg.assistant .msg-bubble{background:var(--bg2)}
+.msg.user .msg-bubble{background:var(--accent);color:#fff}
+.msg.system{justify-content:center}
+.msg.system .msg-bubble{
+  background:transparent;color:var(--text3);font-size:13px;text-align:center;
+  max-width:90%;font-style:italic;
+}
+.msg-typing .msg-bubble{display:flex;gap:4px;padding:16px}
+.msg-typing .dot{width:8px;height:8px;border-radius:50%;background:var(--text3);animation:bounce 1.4s infinite}
+.msg-typing .dot:nth-child(2){animation-delay:.2s}
+.msg-typing .dot:nth-child(3){animation-delay:.4s}
+@keyframes bounce{0%,60%,100%{transform:translateY(0)}30%{transform:translateY(-8px)}}
+
+/* ═══════════════════════════════════════════
+   Input Area
+   ═══════════════════════════════════════════ */
+.input-area{
+  padding:12px 16px calc(12px + var(--safe-bottom));
+  background:var(--bg2);border-top:1px solid var(--bg3);
+  display:flex;gap:10px;align-items:flex-end;flex-shrink:0;
+}
+.input-area textarea{
+  flex:1;padding:12px 16px;border-radius:24px;border:1px solid var(--bg3);
+  background:var(--bg);color:var(--text);font-size:15px;line-height:1.4;
+  resize:none;max-height:120px;outline:none;font-family:inherit;
+  transition:border-color .15s;
+}
+.input-area textarea:focus{border-color:var(--accent)}
+.input-area textarea::placeholder{color:var(--text3)}
+.send-btn{
+  width:44px;height:44px;border-radius:50%;border:none;
+  background:var(--accent);color:#fff;font-size:20px;cursor:pointer;
+  flex-shrink:0;transition:transform .15s,opacity .15s;
+  display:flex;align-items:center;justify-content:center;
+}
+.send-btn:active{transform:scale(.92)}
+.send-btn:disabled{opacity:.4;pointer-events:none}
+.stop-btn{background:var(--danger)}
+
+/* ═══════════════════════════════════════════
+   Toast
+   ═══════════════════════════════════════════ */
+.toast{
+  position:fixed;bottom:100px;left:50%;transform:translateX(-50%);
+  padding:10px 24px;border-radius:24px;background:var(--text);color:var(--bg);
+  font-size:14px;z-index:200;pointer-events:none;
+  opacity:0;transition:opacity .3s;
+}
+.toast.show{opacity:1}
+.toast.error{background:var(--danger);color:#fff}
+
+/* ═══════════════════════════════════════════
+   Responsive
+   ═══════════════════════════════════════════ */
+@media(min-width:768px){
+  .msg-bubble{max-width:70%}
+  .messages{padding:20px 10%}
+  .input-area{padding:16px 10% calc(16px + var(--safe-bottom))}
+  header{padding:12px 10%}
+}
+@media(min-width:1024px){
+  .msg-bubble{max-width:55%}
+  .messages{padding:24px 20%}
+  .input-area{padding:16px 20%}
+  header{padding:12px 20%}
+}
+
+/* Markdown styles */
+.msg-bubble code{background:var(--bg3);padding:2px 6px;border-radius:4px;font-size:.9em}
+.msg-bubble pre{background:var(--bg);padding:12px;border-radius:8px;overflow-x:auto;margin:8px 0}
+.msg-bubble pre code{background:none;padding:0}
+</style>
+</head>
+<body>
+
+<!-- Sidebar -->
+<div class="sidebar" id="sidebar">
+  <div class="sidebar-header">
+    <h2>对话历史</h2>
+    <button class="btn-icon" onclick="toggleSidebar()">✕</button>
+  </div>
+  <button class="new-chat-btn" onclick="newChat()">＋ 新建对话</button>
+  <div class="sidebar-list" id="sidebarList"></div>
+</div>
+<div class="overlay" id="overlay" onclick="toggleSidebar()"></div>
+
+<!-- Main -->
+<header>
+  <button class="btn-icon" onclick="toggleSidebar()">☰</button>
+  <div class="logo">✨</div>
+  <h1>GLM Agent</h1>
+  <span id="modelBadge" style="font-size:12px;color:var(--text3)"></span>
+</header>
+
+<div class="messages" id="messages">
+  <div class="msg system"><div class="msg-bubble">👋 你好！我是 GLM Agent，基于智谱 AI 驱动。<br>我可以聊天、写代码、回答问题。开始对话吧～</div></div>
+</div>
+
+<div class="input-area">
+  <textarea id="input" rows="1" placeholder="输入消息..." onkeydown="onKeyDown(event)" oninput="autoResize()"></textarea>
+  <button class="send-btn" id="sendBtn" onclick="send()" title="发送">➤</button>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ═══════════════════════════════════════════
+// State
+// ═══════════════════════════════════════════
+const API = '/chat';
+let convId = null;
+let streaming = false;
+let abortCtrl = null;
+
+// ═══════════════════════════════════════════
+// Sidebar
+// ═══════════════════════════════════════════
+function toggleSidebar() {
+  const sb = document.getElementById('sidebar');
+  const ov = document.getElementById('overlay');
+  const open = !sb.classList.contains('open');
+  sb.classList.toggle('open', open);
+  ov.classList.toggle('show', open);
+  if (open) loadConversations();
+}
+
+async function loadConversations() {
+  try {
+    const r = await fetch('/conversations?page_size=50');
+    const data = await r.json();
+    const list = document.getElementById('sidebarList');
+    list.innerHTML = data.items.map(c => `
+      <div class="sidebar-item${c.id===convId?' active':''}" onclick="switchConv('${c.id}')">
+        <span class="title">${esc(c.title)}</span>
+        <span class="count">${c.message_count}</span>
+        <span class="del" onclick="event.stopPropagation();delConv('${c.id}')">🗑</span>
+      </div>
+    `).join('') || '<div style="padding:16px;color:var(--text3);text-align:center">暂无对话</div>';
+  } catch(e) { toast('加载对话列表失败', true); }
+}
+
+async function switchConv(id) {
+  convId = id;
+  toggleSidebar();
+  const msgs = document.getElementById('messages');
+  msgs.innerHTML = '<div class="msg system"><div class="msg-bubble">加载中...</div></div>';
+
+  try {
+    const r = await fetch(`/conversations/${id}`);
+    const d = await r.json();
+    msgs.innerHTML = '';
+    d.messages.filter(m=>m.role!=='system').forEach(m => addMsg(m.role, m.content));
+    if (!d.messages.length) {
+      addMsg('system', '空对话，开始聊天吧～');
+    }
+  } catch(e) {
+    addMsg('system', '⚠️ 加载失败');
+  }
+  scrollBottom();
+}
+
+async function delConv(id) {
+  if (!confirm('确定删除此对话？')) return;
+  await fetch(`/conversations/${id}`, {method:'DELETE'});
+  if (convId === id) { convId = null; newChat(); }
+  loadConversations();
+}
+
+function newChat() {
+  convId = null;
+  document.getElementById('messages').innerHTML =
+    '<div class="msg system"><div class="msg-bubble">👋 你好！开始新对话吧～</div></div>';
+  toggleSidebar();
+}
+
+// ═══════════════════════════════════════════
+// Messages
+// ═══════════════════════════════════════════
+function addMsg(role, content) {
+  const el = document.createElement('div');
+  el.className = `msg ${role}`;
+  const avatar = role==='user'?'👤':role==='assistant'?'🤖':'💬';
+  el.innerHTML = `
+    <div class="msg-avatar">${avatar}</div>
+    <div class="msg-bubble">${escapeHtml(content)}</div>
+  `;
+  document.getElementById('messages').appendChild(el);
+  scrollBottom();
+  return el;
+}
+
+function addStreamMsg() {
+  const el = document.createElement('div');
+  el.className = 'msg assistant';
+  el.id = 'streamMsg';
+  el.innerHTML = `
+    <div class="msg-avatar">🤖</div>
+    <div class="msg-bubble"></div>
+  `;
+  document.getElementById('messages').appendChild(el);
+  return el.querySelector('.msg-bubble');
+}
+
+function addTyping() {
+  const el = document.createElement('div');
+  el.className = 'msg assistant msg-typing';
+  el.id = 'typing';
+  el.innerHTML = '<div class="msg-avatar">🤖</div><div class="msg-bubble"><span class="dot"></span><span class="dot"></span><span class="dot"></span></div>';
+  document.getElementById('messages').appendChild(el);
+  scrollBottom();
+}
+
+function removeTyping() {
+  const el = document.getElementById('typing');
+  if (el) el.remove();
+}
+
+// ═══════════════════════════════════════════
+// Send / Stream
+// ═══════════════════════════════════════════
+function onKeyDown(e) {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    send();
+  }
+}
+
+function autoResize() {
+  const ta = document.getElementById('input');
+  ta.style.height = 'auto';
+  ta.style.height = Math.min(ta.scrollHeight, 120) + 'px';
+}
+
+function send() {
+  if (streaming) { stopStream(); return; }
+
+  const input = document.getElementById('input');
+  const text = input.value.trim();
+  if (!text) return;
+
+  input.value = '';
+  input.style.height = 'auto';
+
+  addMsg('user', text);
+  addTyping();
+
+  const btn = document.getElementById('sendBtn');
+  btn.textContent = '■';
+  btn.classList.add('stop-btn');
+
+  streamChat(text);
+}
+
+async function streamChat(text) {
+  streaming = true;
+  abortCtrl = new AbortController();
+  const bubble = addStreamMsg();
+  removeTyping();
+
+  const body = {
+    messages: [{ role: 'user', content: text }],
+    stream: true,
+  };
+  if (convId) body.conversation_id = convId;
+
+  try {
+    const r = await fetch(API + '/stream', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: abortCtrl.signal,
+    });
+
+    const reader = r.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+
+      const lines = buf.split('\n');
+      buf = lines.pop() || '';
+
+      for (const line of lines) {
+        if (!line.startsWith('data:')) continue;
+        const data = line.slice(5).trim();
+        if (!data || data === '[DONE]') continue;
+
+        try {
+          const parsed = JSON.parse(data);
+
+          // Handle SSE event format from sse-starlette
+          if (parsed.event === 'done') {
+            convId = parsed.data ? JSON.parse(parsed.data).conversation_id : convId;
+          } else if (parsed.event === 'error') {
+            const errData = typeof parsed.data === 'string' ? JSON.parse(parsed.data) : parsed.data;
+            bubble.textContent = '⚠️ ' + (errData.error || '未知错误');
+          } else if (parsed.event === 'delta') {
+            const deltaData = typeof parsed.data === 'string' ? JSON.parse(parsed.data) : parsed.data;
+            if (deltaData.delta) {
+              bubble.textContent += deltaData.delta;
+              scrollBottom();
+            }
+          }
+        } catch {}
+      }
+    }
+
+    if (!bubble.textContent) bubble.textContent = '(空回复)';
+  } catch (e) {
+    if (e.name !== 'AbortError') {
+      bubble.textContent = '⚠️ 请求失败: ' + e.message;
+      toast('发送失败，请重试', true);
+    }
+  }
+
+  streaming = false;
+  const btn = document.getElementById('sendBtn');
+  btn.textContent = '➤';
+  btn.classList.remove('stop-btn');
+  abortCtrl = null;
+}
+
+function stopStream() {
+  if (abortCtrl) abortCtrl.abort();
+}
+
+// ═══════════════════════════════════════════
+// Utils
+// ═══════════════════════════════════════════
+function scrollBottom() {
+  const el = document.getElementById('messages');
+  requestAnimationFrame(() => el.scrollTop = el.scrollHeight);
+}
+
+function toast(msg, isError = false) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'toast ' + (isError ? 'error' : '') + ' show';
+  setTimeout(() => t.classList.remove('show'), 2500);
+}
+
+function esc(s) {
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+function escapeHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// Service Worker registration for PWA
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch(() => {});
+  });
+}
+</script>
+</body>
+</html>
