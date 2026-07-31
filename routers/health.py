@@ -18,8 +18,7 @@ async def health():
     settings = get_settings()
     return {
         "status": "ok",
-        "version": "1.0.0",
-        "model": settings.zhipuai_model,
+        "version": "2.0.0",
         "auth_enabled": settings.is_auth_enabled,
     }
 

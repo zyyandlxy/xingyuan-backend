@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-import hashlib
+import os
 import time
 import uuid
 from datetime import datetime, timezone
@@ -18,7 +18,7 @@ from agent.store import _execute, _fetchone, _fetchall
 # JWT 配置
 # ═══════════════════════════════════════════
 
-JWT_SECRET = "xingyuan-jwt-secret-v1"  # 生产环境从环境变量读取
+JWT_SECRET = os.getenv("JWT_SECRET", "xingyuan-jwt-secret-v1")
 JWT_EXPIRE_SECONDS = 7 * 24 * 3600  # Token 7 天过期
 
 
@@ -51,7 +51,7 @@ CREATE TABLE IF NOT EXISTS users (
     username    TEXT NOT NULL UNIQUE,
     password    TEXT NOT NULL,
     nickname    TEXT DEFAULT '',
-    avatar      TEXT DEFAULT '✨',
+    avatar      TEXT DEFAULT '',
     created_at  TEXT NOT NULL,
     last_login  TEXT
 );
@@ -67,6 +67,35 @@ CREATE TABLE IF NOT EXISTS login_history (
 
 CREATE INDEX IF NOT EXISTS idx_login_user ON login_history(user_id, login_at DESC);
 """
+
+
+# ═══════════════════════════════════════════
+# 密码强度校验
+# ═══════════════════════════════════════════
+
+def validate_password_strength(password: str, username: str = "") -> str | None:
+    """
+    校验密码强度，返回 None 表示通过，否则返回错误信息。
+    要求: 至少 8 位 + 包含字母和数字
+    """
+    if len(password) < 8:
+        return "密码至少需要 8 位"
+    if not any(c.isalpha() for c in password):
+        return "密码需要包含至少一个字母"
+    if not any(c.isdigit() for c in password):
+        return "密码需要包含至少一个数字"
+    if username and username.lower() in password.lower():
+        return "密码不能包含用户名"
+    return None
+
+
+def validate_username(username: str) -> str | None:
+    """校验用户名合法性"""
+    if len(username) < 2 or len(username) > 30:
+        return "用户名需要 2-30 个字符"
+    if not all(c.isalnum() or c in '_-' for c in username):
+        return "用户名只能包含字母、数字、下划线和连字符"
+    return None
 
 
 # ═══════════════════════════════════════════
@@ -90,6 +119,15 @@ async def register_user(username: str, password: str, nickname: str = "") -> dic
     from agent.store import get_store
     store = await get_store()
     db = await store._get_conn()
+
+    # 用户名校验
+    username = username.strip()
+    if err := validate_username(username):
+        raise ValueError(err)
+
+    # 密码强度校验
+    if err := validate_password_strength(password, username):
+        raise ValueError(err)
 
     # 检查用户名是否已存在
     row = await _fetchone(db, "SELECT id FROM users WHERE username = ?", (username,))

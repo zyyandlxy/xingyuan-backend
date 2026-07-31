@@ -1,5 +1,6 @@
 # ═══════════════════════════════════════════
-# GLM Agent Docker 部署
+# ═══════════════════════════════════════════
+# 星媛 Agent Docker 部署
 # 启动: docker-compose up -d
 # 查看日志: docker-compose logs -f
 # ═══════════════════════════════════════════
@@ -7,9 +8,9 @@
 version: "3.8"
 
 services:
-  glm-agent:
+  xingyuan-backend:
     build: .
-    container_name: glm-agent
+    container_name: xingyuan-backend
     ports:
       - "${PORT:-8000}:8000"
     environment:

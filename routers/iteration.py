@@ -58,7 +58,7 @@ async def submit_feedback(
     elif body.rating == 5:
         await record_evolution(user_id, f"收到满分评价！保持当前风格")
 
-    return {"success": True, "message": "感谢反馈！星媛会继续进步 ✨"}
+    return {"success": True, "message": "感谢反馈！星媛会继续进步"}
 
 
 @router.get("/feedback", summary="反馈统计")

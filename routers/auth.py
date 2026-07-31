@@ -13,6 +13,8 @@ from agent.users import (
     init_user_tables,
     login_user,
     register_user,
+    validate_password_strength,
+    validate_username,
     verify_token,
 )
 
@@ -25,7 +27,7 @@ router = APIRouter()
 
 class RegisterRequest(BaseModel):
     username: str = Field(..., min_length=2, max_length=30, description="用户名")
-    password: str = Field(..., min_length=6, max_length=100, description="密码")
+    password: str = Field(..., min_length=8, max_length=100, description="密码（至少8位，含字母和数字）")
     nickname: str = Field(default="", max_length=30, description="昵称")
 
 
@@ -42,11 +44,19 @@ class LoginRequest(BaseModel):
 async def register(body: RegisterRequest, request: Request):
     """注册新用户，返回 Token"""
     await init_user_tables()
+
+    # 前端校验（快速失败）
+    username = body.username.strip()
+    if err := validate_username(username):
+        raise HTTPException(status_code=400, detail=err)
+    if err := validate_password_strength(body.password, username):
+        raise HTTPException(status_code=400, detail=err)
+
     try:
         result = await register_user(
-            username=body.username.strip(),
+            username=username,
             password=body.password,
-            nickname=body.nickname.strip() or body.username.strip(),
+            nickname=body.nickname.strip() or username,
         )
         return {
             "success": True,
@@ -62,7 +72,10 @@ async def login(body: LoginRequest, request: Request):
     """用户登录，返回 Token 和用户信息"""
     await init_user_tables()
     # 获取客户端信息
-    ip = request.headers.get("X-Forwarded-For", request.client.host if request.client else "unknown")
+    ip = request.headers.get(
+        "X-Forwarded-For",
+        request.client.host if request.client else "unknown",
+    )
     device = request.headers.get("User-Agent", "unknown")
 
     try:

@@ -40,9 +40,10 @@ class ConversationStore:
         await db.executescript("""
             CREATE TABLE IF NOT EXISTS conversations (
                 id          TEXT PRIMARY KEY,
-                user_id     TEXT DEFAULT '',
+                user_id     TEXT NOT NULL DEFAULT '',
                 title       TEXT NOT NULL DEFAULT '新对话',
                 model       TEXT NOT NULL DEFAULT 'glm-4-flash',
+                deleted     INTEGER NOT NULL DEFAULT 0,
                 created_at  TEXT NOT NULL,
                 updated_at  TEXT NOT NULL
             );
@@ -66,11 +67,15 @@ class ConversationStore:
             CREATE INDEX IF NOT EXISTS idx_conv_user
                 ON conversations(user_id, updated_at DESC);
         """)
-        # 兼容旧表：添加 user_id 列（如果不存在）
-        try:
-            await db.execute("ALTER TABLE conversations ADD COLUMN user_id TEXT DEFAULT ''")
-        except Exception:
-            pass
+        # 兼容旧表：添加列（如果不存在）
+        for col, default in [("user_id", "''"), ("deleted", "0")]:
+            try:
+                await db.execute(
+                    f"ALTER TABLE conversations ADD COLUMN {col} "
+                    f"TEXT DEFAULT {default}"
+                )
+            except Exception:
+                pass
         await db.commit()
 
     async def close(self) -> None:
@@ -110,13 +115,22 @@ class ConversationStore:
         await db.commit()
         return conv_id
 
-    async def get_conversation(self, conv_id: str) -> ConversationDetail | None:
-        """获取对话详情（含所有消息）"""
+    async def get_conversation(
+        self, conv_id: str, user_id: str = ""
+    ) -> ConversationDetail | None:
+        """获取对话详情（含所有消息），可选的用户隔离"""
         db = await self._get_conn()
 
-        conv = await db.execute(
-            "SELECT * FROM conversations WHERE id = ?", (conv_id,)
-        )
+        if user_id:
+            conv = await db.execute(
+                "SELECT * FROM conversations WHERE id = ? AND user_id = ? AND deleted = 0",
+                (conv_id, user_id),
+            )
+        else:
+            conv = await db.execute(
+                "SELECT * FROM conversations WHERE id = ? AND deleted = 0",
+                (conv_id,),
+            )
         row = await conv.fetchone()
         if not row:
             return None
@@ -153,10 +167,13 @@ class ConversationStore:
 
         if user_id:
             total_row = await db.execute(
-                "SELECT COUNT(*) FROM conversations WHERE user_id = ?", (user_id,)
+                "SELECT COUNT(*) FROM conversations WHERE user_id = ? AND deleted = 0",
+                (user_id,),
             )
         else:
-            total_row = await db.execute("SELECT COUNT(*) FROM conversations")
+            total_row = await db.execute(
+                "SELECT COUNT(*) FROM conversations WHERE deleted = 0"
+            )
         total = (await total_row.fetchone())[0]
 
         offset = (page - 1) * page_size
@@ -166,7 +183,7 @@ class ConversationStore:
                 SELECT c.*, COUNT(m.id) as msg_count
                 FROM conversations c
                 LEFT JOIN messages m ON m.conversation_id = c.id AND m.role != 'system'
-                WHERE c.user_id = ?
+                WHERE c.user_id = ? AND c.deleted = 0
                 GROUP BY c.id
                 ORDER BY c.updated_at DESC
                 LIMIT ? OFFSET ?
@@ -179,6 +196,7 @@ class ConversationStore:
                 SELECT c.*, COUNT(m.id) as msg_count
                 FROM conversations c
                 LEFT JOIN messages m ON m.conversation_id = c.id AND m.role != 'system'
+                WHERE c.deleted = 0
                 GROUP BY c.id
                 ORDER BY c.updated_at DESC
                 LIMIT ? OFFSET ?
@@ -200,12 +218,25 @@ class ConversationStore:
 
         return items, total
 
-    async def delete_conversation(self, conv_id: str) -> bool:
-        """删除对话，返回是否成功"""
+    async def delete_conversation(
+        self, conv_id: str, user_id: str = ""
+    ) -> bool:
+        """软删除对话（标记 deleted=1），返回是否成功"""
         db = await self._get_conn()
-        cursor = await db.execute(
-            "DELETE FROM conversations WHERE id = ?", (conv_id,)
-        )
+        now = datetime.now(timezone.utc).isoformat()
+
+        if user_id:
+            cursor = await db.execute(
+                "UPDATE conversations SET deleted = 1, updated_at = ? "
+                "WHERE id = ? AND user_id = ? AND deleted = 0",
+                (now, conv_id, user_id),
+            )
+        else:
+            cursor = await db.execute(
+                "UPDATE conversations SET deleted = 1, updated_at = ? "
+                "WHERE id = ? AND deleted = 0",
+                (now, conv_id),
+            )
         await db.commit()
         return cursor.rowcount > 0
 

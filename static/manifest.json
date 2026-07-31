@@ -1,7 +1,7 @@
 {
-  "name": "GLM Agent",
-  "short_name": "GLM Agent",
-  "description": "AI 智能助手 — 基于智谱 GLM",
+  "name": "星媛 — AI 智能助手",
+  "short_name": "星媛",
+  "description": "星媛 AI 智能助手 — 基于智谱 GLM",
   "start_url": "/",
   "display": "standalone",
   "orientation": "portrait-primary",

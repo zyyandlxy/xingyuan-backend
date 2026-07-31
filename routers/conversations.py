@@ -45,7 +45,7 @@ async def create_conversation(
         system_prompt=body.system_prompt,
         user_id=user_id,
     )
-    detail = await store.get_conversation(conv_id)
+    detail = await store.get_conversation(conv_id, user_id=user_id)
     if not detail:
         raise HTTPException(status_code=500, detail="创建失败")
 
@@ -71,9 +71,9 @@ async def get_conversation(
     conv_id: str,
     authorization: str = Header(default=""),
 ):
-    _get_user_id(authorization)  # 验证登录
+    user_id = _get_user_id(authorization)
     store = await get_store()
-    detail = await store.get_conversation(conv_id)
+    detail = await store.get_conversation(conv_id, user_id=user_id)
     if not detail:
         raise HTTPException(status_code=404, detail="对话不存在")
     return detail
@@ -84,8 +84,8 @@ async def delete_conversation(
     conv_id: str,
     authorization: str = Header(default=""),
 ):
-    _get_user_id(authorization)
+    user_id = _get_user_id(authorization)
     store = await get_store()
-    deleted = await store.delete_conversation(conv_id)
+    deleted = await store.delete_conversation(conv_id, user_id=user_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="对话不存在")

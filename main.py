@@ -1,10 +1,11 @@
 """
-GLM Agent — 生产级 AI 微服务入口
+星媛 Agent — 生产级 AI 微服务入口
 FastAPI + 智谱 AI GLM + SSE 流式 + 工具调用 + PWA
 """
 
 from __future__ import annotations
 
+import os
 import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -22,6 +23,7 @@ from agent.middleware import (
     LoggingMiddleware,
     RateLimitMiddleware,
     RequestIDMiddleware,
+    SecurityHeadersMiddleware,
     TimingMiddleware,
     request_id_var,
 )
@@ -80,7 +82,7 @@ async def lifespan(app: FastAPI):
     setup_logging()
 
     logger.bind(request_id="startup").info(
-        f"GLM Agent 启动中... model={settings.zhipuai_model}"
+        f"星媛 Agent 启动中... model={settings.zhipuai_model}"
     )
 
     # 初始化数据库
@@ -95,7 +97,7 @@ async def lifespan(app: FastAPI):
 
     # 清理资源
     await close_store()
-    logger.bind(request_id="shutdown").info("GLM Agent 已关闭")
+    logger.bind(request_id="shutdown").info("星媛 Agent 已关闭")
 
 
 # ═══════════════════════════════════════════
@@ -106,26 +108,37 @@ def create_app() -> FastAPI:
     settings = get_settings()
 
     app = FastAPI(
-        title="GLM Agent API",
-        version="1.0.0",
-        description="生产级 AI Agent 微服务 — 支持智谱 GLM、流式 SSE、工具调用、PWA",
+        title="星媛 Agent API",
+        version="2.0.0",
+        description="星媛 AI Agent — 智谱 GLM、流式 SSE、工具调用、自我迭代、PWA",
         lifespan=lifespan,
         docs_url="/docs",
         redoc_url="/redoc",
     )
 
-    # ── 中间件（由外到内） ──────────────────
+    # ── 安全中间件（最外层） ─────────────────
+    app.add_middleware(SecurityHeadersMiddleware)
+
+    # ── 业务中间件（由外到内） ───────────────
     app.add_middleware(RequestIDMiddleware)
     app.add_middleware(TimingMiddleware)
     app.add_middleware(LoggingMiddleware)
     app.add_middleware(AuthMiddleware)
     app.add_middleware(RateLimitMiddleware)
 
-    # CORS
+    # CORS：生产环境应限制具体域名
+    cors_origins = settings.cors_origin_list
+    if "*" in cors_origins:
+        # 开发模式：允许所有来源，但禁用 credentials（符合 CORS 规范）
+        cors_origins = ["*"]
+        allow_creds = False
+    else:
+        allow_creds = True
+
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=settings.cors_origin_list,
-        allow_credentials=True,
+        allow_origins=cors_origins,
+        allow_credentials=allow_creds,
         allow_methods=["*"],
         allow_headers=["*"],
         expose_headers=["X-Request-ID", "X-Process-Time", "X-RateLimit-Remaining"],
@@ -162,12 +175,13 @@ def create_app() -> FastAPI:
 
     @app.exception_handler(Exception)
     async def handle_general_exception(request: Request, exc: Exception):
+        is_debug = settings.debug or os.getenv("ENV", "") == "development"
         logger.error(f"未处理异常: {exc}", request_id=request_id_var.get())
         return JSONResponse(
             status_code=500,
             content=ErrorResponse(
                 error="服务内部错误",
-                detail=str(exc),
+                detail=str(exc) if is_debug else "请稍后重试或联系管理员",
                 code="INTERNAL_ERROR",
                 request_id=request_id_var.get(),
             ).model_dump(),

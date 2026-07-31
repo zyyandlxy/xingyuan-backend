@@ -1,13 +1,12 @@
 """
 中间件层
-请求ID注入、请求计时、API Key 认证、IP 限流
+请求ID注入、请求计时、API Key 认证、IP 限流、CSP 安全头
 """
 
 from __future__ import annotations
 
 import time
 import uuid
-from collections import defaultdict
 from contextvars import ContextVar
 
 from fastapi import Request, Response
@@ -22,8 +21,8 @@ from agent.models import ErrorResponse
 # 请求级上下文变量
 request_id_var: ContextVar[str] = ContextVar("request_id", default="")
 
-# 无需认证的路径
-AUTH_WHITELIST = {
+# 无需服务级 API Key 认证的路径
+API_KEY_WHITELIST = {
     "/health",
     "/health/ready",
     "/docs",
@@ -34,6 +33,20 @@ AUTH_WHITELIST = {
     "/auth/login",
     "/auth/register",
 }
+
+# 完全跳过限流的路径（健康检查、静态文件、文档）
+RATE_LIMIT_WHITELIST = {
+    "/health",
+    "/health/ready",
+    "/docs",
+    "/openapi.json",
+    "/redoc",
+    "/favicon.ico",
+    "/",
+}
+
+# Auth 端点专用限流：每分钟 5 次（防暴力破解）
+AUTH_RATE_LIMIT = 5
 
 
 # ═══════════════════════════════════════════
@@ -68,11 +81,41 @@ class TimingMiddleware(BaseHTTPMiddleware):
 
 
 # ═══════════════════════════════════════════
+# Content Security Policy 中间件
+# ═══════════════════════════════════════════
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """添加安全相关的 HTTP 响应头"""
+
+    async def dispatch(self, request: Request, call_next):
+        response: Response = await call_next(request)
+
+        # CSP: 允许同源资源 + inline style/script（PWA 需要）
+        csp = (
+            "default-src 'self'; "
+            "script-src 'self' 'unsafe-inline'; "
+            "style-src 'self' 'unsafe-inline'; "
+            "img-src 'self' data:; "
+            "connect-src 'self' https:; "
+            "font-src 'self'; "
+            "object-src 'none'; "
+            "base-uri 'self'; "
+            "form-action 'self'"
+        )
+        response.headers["Content-Security-Policy"] = csp
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+
+        return response
+
+
+# ═══════════════════════════════════════════
 # API Key 认证中间件
 # ═══════════════════════════════════════════
 
 class AuthMiddleware(BaseHTTPMiddleware):
-    """X-API-Key 认证中间件"""
+    """X-API-Key 认证中间件（服务级别，区别于用户 JWT）"""
 
     async def dispatch(self, request: Request, call_next):
         settings = get_settings()
@@ -83,10 +126,12 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
         # 检查路径是否在白名单
         path = request.url.path.rstrip("/") or "/"
-        if path in AUTH_WHITELIST or path.startswith("/static") or path.startswith("/auth/"):
+        if path in API_KEY_WHITELIST or path.startswith("/static") or path.startswith("/auth/"):
             return await call_next(request)
 
-        api_key = request.headers.get("X-API-Key") or request.headers.get("Authorization", "").removeprefix("Bearer ")
+        api_key = request.headers.get("X-API-Key") or request.headers.get(
+            "Authorization", ""
+        ).removeprefix("Bearer ")
 
         if not api_key or api_key != settings.service_api_key:
             return JSONResponse(
@@ -106,69 +151,89 @@ class AuthMiddleware(BaseHTTPMiddleware):
 # 令牌桶限流中间件
 # ═══════════════════════════════════════════
 
-class RateLimitMiddleware(BaseHTTPMiddleware):
-    """基于 IP 的令牌桶限流"""
+class RateLimitMiddleware:
+    """基于 IP 的令牌桶限流（纯 ASGI 中间件）。Auth 端点有独立配额"""
 
-    def __init__(self, app, **kwargs):
-        super().__init__(app)
+    def __init__(self, app):
+        self.app = app
         self._buckets: dict[str, tuple[float, float]] = {}
-        self._locks: dict[str, bool] = defaultdict(bool)
 
-    async def dispatch(self, request: Request, call_next):
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        path = scope.get("path", "/").rstrip("/") or "/"
+
+        # 白名单路径不限流
+        if path in RATE_LIMIT_WHITELIST:
+            await self.app(scope, receive, send)
+            return
+
+        # Auth 端点始终强制限流，其他端点遵循全局设置
         settings = get_settings()
+        is_auth_path = path.startswith("/auth/")
+        if not is_auth_path and settings.rate_limit_per_minute <= 0:
+            await self.app(scope, receive, send)
+            return
 
-        if settings.rate_limit_per_minute <= 0:
-            return await call_next(request)
-
-        # 跳过白名单路径
-        path = request.url.path.rstrip("/") or "/"
-        if path in AUTH_WHITELIST:
-            return await call_next(request)
+        rate = AUTH_RATE_LIMIT if is_auth_path else settings.rate_limit_per_minute
 
         # 获取客户端 IP
-        client_ip = (
-            request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
-            or request.headers.get("X-Real-IP", "")
-            or (request.client.host if request.client else "unknown")
+        fwd = next(
+            (h[1] for h in scope.get("headers", []) if h[0] == b"x-forwarded-for"),
+            b"",
         )
+        client_ip = fwd.decode().split(",")[0].strip() if fwd else ""
+        if not client_ip:
+            real_ip = next(
+                (h[1] for h in scope.get("headers", []) if h[0] == b"x-real-ip"),
+                b"",
+            )
+            client_ip = real_ip.decode() if real_ip else ""
+        if not client_ip:
+            client = scope.get("client")
+            client_ip = client[0] if client else "unknown"
 
-        if not self._consume(client_ip, settings.rate_limit_per_minute):
-            return JSONResponse(
+        if not self._consume(client_ip, rate):
+            rid = request_id_var.get()
+            logger.info(
+                f"RateLimit BLOCKED path={path} ip={client_ip} rate={rate}",
+                request_id=rid,
+            )
+            response = JSONResponse(
                 status_code=429,
                 content=ErrorResponse(
                     error="请求过于频繁",
-                    detail=f"Limit: {settings.rate_limit_per_minute}/min",
+                    detail=f"Limit: {rate}/min",
                     code="RATE_LIMIT_EXCEEDED",
-                    request_id=request_id_var.get(),
+                    request_id=rid,
                 ).model_dump(),
                 headers={"Retry-After": "60"},
             )
+            await response(scope, receive, send)
+            return
 
-        return await call_next(request)
+        await self.app(scope, receive, send)
 
     def _consume(self, key: str, rate: int) -> bool:
         """令牌桶消费，返回是否允许"""
         now = time.monotonic()
-        refill_rate = rate / 60.0  # tokens per second
+        refill_rate = rate / 60.0
 
         last_ts, tokens = self._buckets.get(key, (now, float(rate)))
 
-        # 补充令牌
         elapsed = now - last_ts
-        tokens = min(float(rate), tokens + elapsed * refill_rate)
-        tokens -= 1.0
-
-        if tokens < 0:
-            # 计算需要等待的时间
-            wait_time = abs(tokens) / refill_rate
-            self._buckets[key] = (now, 0.0)
+        new_tokens = min(float(rate), tokens + elapsed * refill_rate)
+        if new_tokens < 1.0:
+            self._buckets[key] = (now, new_tokens)
             return False
 
-        self._buckets[key] = (now, tokens)
+        new_tokens -= 1.0
+        self._buckets[key] = (now, new_tokens)
 
-        # 定期清理过期桶
         if len(self._buckets) > 10000:
-            threshold = now - 120  # 2分钟未活跃清理
+            threshold = now - 120
             self._buckets = {
                 k: v for k, v in self._buckets.items()
                 if v[0] > threshold

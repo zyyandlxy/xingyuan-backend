@@ -38,22 +38,27 @@ def _get_user(authorization: str) -> dict:
 
 async def _learn_and_personalize(request: ChatRequest, user_id: str):
     """自动学习 + 注入个性化提示词"""
-    # 自动学习
     await init_iteration_tables()
     for msg in request.messages:
         if msg.role == "user" and len(msg.content) > 2:
             try:
                 await learn_from_message(user_id, msg.content)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(
+                    f"学习失败 user={user_id}: {e}",
+                    request_id=request_id_var.get(),
+                )
 
     # 注入个性化提示词
     if not request.system_prompt:
         try:
             persona = await generate_persona_prompt(user_id)
             request.system_prompt = persona
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(
+                f"生成 persona 失败 user={user_id}: {e}",
+                request_id=request_id_var.get(),
+            )
 
 
 @router.post("", response_model=ChatResponse, summary="非流式聊天")
@@ -67,7 +72,6 @@ async def chat_endpoint(
     settings = get_settings()
     store = await get_store()
 
-    # 自动学习 + 个性化提示词
     await _learn_and_personalize(request, user_id)
 
     conv_id = request.conversation_id
@@ -129,6 +133,7 @@ async def chat_stream_endpoint(
             user_id=user_id,
         )
 
+    # 先持久化用户消息
     for msg in request.messages:
         if msg.role != "system":
             await store.add_message(conv_id, msg.role, msg.content)
@@ -140,6 +145,7 @@ async def chat_stream_endpoint(
                 full_content += chunk.delta
                 yield {"event": "delta", "data": chunk.model_dump_json()}
 
+            # 流正常结束，保存完整回复
             if full_content:
                 await store.add_message(conv_id, "assistant", full_content)
 
@@ -149,8 +155,16 @@ async def chat_stream_endpoint(
 
         except Exception as e:
             logger.error(f"流式错误: {traceback.format_exc()}")
+            # 连接断开时也保存已收到的部分内容
+            if full_content:
+                try:
+                    await store.add_message(conv_id, "assistant", full_content + " [中断]")
+                except Exception:
+                    pass
             yield {"event": "error", "data": json.dumps({
-                "error": str(e), "code": "STREAM_ERROR",
+                "error": "流式传输中断",
+                "partial_chars": len(full_content),
+                "code": "STREAM_ERROR",
             })}
 
     return EventSourceResponse(event_generator())
