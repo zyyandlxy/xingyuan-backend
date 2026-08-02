@@ -1,2 +1,2 @@
 http://192.168.1.200:8000
-https://outlined-cutting-incident-guest.trycloudflare.com
+https://analysts-ball-devon-lyric.trycloudflare.com
