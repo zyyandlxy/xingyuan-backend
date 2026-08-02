@@ -1,2 +1,2 @@
 http://192.168.1.200:8000
-https://mlb-string-node-durable.trycloudflare.com
+https://public-manufacturer-committees-watts.trycloudflare.com
