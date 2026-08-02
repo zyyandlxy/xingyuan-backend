@@ -1,2 +1,2 @@
 http://192.168.1.200:8000
-https://displayed-load-quebec-paradise.trycloudflare.com
+https://mem-survival-currency-bathroom.trycloudflare.com
