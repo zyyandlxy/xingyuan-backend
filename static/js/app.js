@@ -27,6 +27,70 @@ let streaming = false;
 let abortCtrl = null;
 
 // ═══════════════════════════════════════════
+// Auth state & helpers
+// ═══════════════════════════════════════════
+const TOKEN_KEY = 'xy_token';
+const USER_KEY = 'xy_user';
+let token = localStorage.getItem(TOKEN_KEY) || '';
+let authUser = null;
+
+function authHeaders(extra) {
+  var h = extra || {};
+  if (token) h.Authorization = 'Bearer ' + token;
+  return h;
+}
+
+function apiFetch(url, opts) {
+  opts = opts || {};
+  opts.headers = authHeaders(opts.headers || {});
+  return fetch(url, opts);
+}
+
+function saveAuth(data) {
+  token = data.token;
+  authUser = { username: data.username, nickname: data.nickname };
+  localStorage.setItem(TOKEN_KEY, token);
+  localStorage.setItem(USER_KEY, JSON.stringify(authUser));
+}
+
+function clearAuth() {
+  token = '';
+  authUser = null;
+  localStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem(USER_KEY);
+}
+
+function renderAuthUI() {
+  var btn = document.getElementById('userBtn');
+  if (authUser) {
+    btn.innerHTML = '<span class="auth-user" title="' + esc(authUser.nickname || authUser.username) + '">' +
+      I.user + '<span>' + esc(authUser.nickname || authUser.username) + '</span></span>';
+  } else {
+    btn.innerHTML = '<svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 4-7 8-7s8 3 8 7"/></svg>';
+  }
+}
+
+// 启动时校验 token 是否有效
+function checkAuth() {
+  if (!token) return;
+  apiFetch('/auth/me')
+    .then(function(r) {
+      if (r.status === 401) { clearAuth(); renderAuthUI(); return; }
+      return r.json();
+    })
+    .then(function(d) {
+      if (d && d.success) {
+        authUser = { username: d.data.username, nickname: d.data.nickname };
+        localStorage.setItem(USER_KEY, JSON.stringify(authUser));
+      } else if (d) {
+        clearAuth();
+      }
+      renderAuthUI();
+    })
+    .catch(function() { renderAuthUI(); });
+}
+
+// ═══════════════════════════════════════════
 // UI Utils
 // ═══════════════════════════════════════════
 function toast(msg, isError) {
@@ -65,10 +129,15 @@ function toggleSidebar() {
 }
 
 function loadConversations() {
-  fetch('/conversations?page_size=50')
+  var list = document.getElementById('sidebarList');
+  if (!authUser) {
+    list.innerHTML = '<div style="padding:16px;color:var(--text3);text-align:center">' +
+      '登录后同步你的对话历史<br><button class="auth-submit" style="margin-top:12px;width:auto;padding:8px 20px" onclick="openAuth(\'login\')">立即登录</button></div>';
+    return;
+  }
+  apiFetch('/conversations?page_size=50')
     .then(function(r) { return r.json(); })
     .then(function(data) {
-      var list = document.getElementById('sidebarList');
       var html = data.items.map(function(c) {
         return '<div class="sidebar-item' + (c.id === convId ? ' active' : '') +
           '" onclick="switchConv(\'' + c.id + '\')">' +
@@ -87,7 +156,7 @@ function switchConv(id) {
   var msgs = document.getElementById('messages');
   msgs.innerHTML = '<div class="msg system"><div class="msg-bubble">加载中...</div></div>';
 
-  fetch('/conversations/' + id)
+  apiFetch('/conversations/' + id)
     .then(function(r) { return r.json(); })
     .then(function(d) {
       msgs.innerHTML = '';
@@ -102,7 +171,7 @@ function switchConv(id) {
 
 function delConv(id) {
   if (!confirm('确定删除此对话？')) return;
-  fetch('/conversations/' + id, { method: 'DELETE' }).then(function() {
+  apiFetch('/conversations/' + id, { method: 'DELETE' }).then(function() {
     if (convId === id) { convId = null; newChat(); }
     loadConversations();
   });
@@ -202,7 +271,7 @@ function streamChat(text) {
 
   fetch(API + '/stream', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: authHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify(body),
     signal: abortCtrl.signal,
   })
@@ -271,6 +340,117 @@ function streamChat(text) {
 function stopStream() {
   if (abortCtrl) abortCtrl.abort();
 }
+
+// ═══════════════════════════════════════════
+// Auth UI
+// ═══════════════════════════════════════════
+var authTab = 'login';
+
+function toggleAuth() {
+  if (authUser) {
+    if (!confirm('确定退出登录？')) return;
+    doLogout();
+    return;
+  }
+  openAuth('login');
+}
+
+function openAuth(tab) {
+  authTab = tab || 'login';
+  setAuthTab(authTab);
+  document.getElementById('authUser').value = '';
+  document.getElementById('authPass').value = '';
+  document.getElementById('authHint').textContent = '';
+  document.getElementById('authOverlay').classList.add('show');
+  setTimeout(function() { document.getElementById('authUser').focus(); }, 100);
+}
+
+function closeAuth() {
+  document.getElementById('authOverlay').classList.remove('show');
+}
+
+function setAuthTab(tab) {
+  authTab = tab;
+  document.getElementById('tabLogin').classList.toggle('active', tab === 'login');
+  document.getElementById('tabRegister').classList.toggle('active', tab === 'register');
+  var nick = document.getElementById('nickField');
+  nick.style.display = tab === 'register' ? 'flex' : 'none';
+  document.getElementById('authSubmit').textContent = tab === 'login' ? '登 录' : '注 册';
+  document.getElementById('authHint').textContent = '';
+}
+
+function submitAuth() {
+  var username = document.getElementById('authUser').value.trim();
+  var password = document.getElementById('authPass').value;
+  if (!username || !password) {
+    showAuthHint('请输入用户名和密码');
+    return;
+  }
+
+  var body = { username: username, password: password };
+  var url = '/auth/login';
+  if (authTab === 'register') {
+    url = '/auth/register';
+    body.nickname = document.getElementById('authNick').value.trim();
+  }
+
+  var btn = document.getElementById('authSubmit');
+  btn.disabled = true;
+  btn.textContent = '请稍候...';
+
+  fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+    .then(function(r) { return r.json().then(function(d) { return { status: r.status, data: d }; }); })
+    .then(function(res) {
+      if (res.status !== 200 || !res.data.success) {
+        var detail = res.data.detail;
+        if (typeof detail === 'string') showAuthHint(detail);
+        else showAuthHint('操作失败，请重试');
+        return;
+      }
+      var d = res.data.data;
+      saveAuth(d);
+      closeAuth();
+      toast('欢迎回来，' + (d.nickname || d.username));
+      renderAuthUI();
+      newChat();
+      loadConversations();
+    })
+    .catch(function() { showAuthHint('网络错误，请重试'); })
+    .finally(function() {
+      btn.disabled = false;
+      btn.textContent = authTab === 'login' ? '登 录' : '注 册';
+    });
+}
+
+function showAuthHint(msg) {
+  document.getElementById('authHint').textContent = msg;
+}
+
+function doLogout() {
+  clearAuth();
+  renderAuthUI();
+  newChat();
+  toast('已退出登录');
+}
+
+// ═══════════════════════════════════════════
+// Init
+// ═══════════════════════════════════════════
+(function init() {
+  // 恢复本地缓存的用户信息（离线可用）
+  try {
+    var cached = JSON.parse(localStorage.getItem(USER_KEY) || 'null');
+    if (cached && cached.username) {
+      authUser = cached;
+      renderAuthUI();
+    }
+  } catch (e) { /* ignore */ }
+  checkAuth();
+})();
 
 // ═══════════════════════════════════════════
 // PWA Service Worker

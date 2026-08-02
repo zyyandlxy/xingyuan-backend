@@ -1,5 +1,6 @@
 // GLM Agent — PWA Service Worker
-const CACHE = 'glm-agent-v1';
+// v2: 新增用户认证 + 静态资源版本化（升版本号强制 PWA 刷新旧缓存）
+const CACHE = 'glm-agent-v2';
 const URLS = ['/', '/manifest.json'];
 
 self.addEventListener('install', e => {

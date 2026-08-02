@@ -8,6 +8,7 @@ from __future__ import annotations
 import time
 import uuid
 from contextvars import ContextVar
+from pathlib import Path
 
 from fastapi import Request, Response
 from loguru import logger
@@ -21,7 +22,27 @@ from agent.models import ErrorResponse
 # 请求级上下文变量
 request_id_var: ContextVar[str] = ContextVar("request_id", default="")
 
+# 静态资源目录（应用挂载在根路径 "/"，如 /css/app.css、/manifest.json）
+STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
+
+# 静态资源扩展名（快速判断，避免每次请求都 stat 磁盘）
+STATIC_EXTENSIONS = (
+    ".css", ".js", ".png", ".jpg", ".jpeg", ".svg", ".gif",
+    ".ico", ".webmanifest", ".woff", ".woff2", ".ttf", ".otf", ".txt",
+)
+
+
+def _is_static_asset(path: str) -> bool:
+    """判断路径是否对应 static/ 目录下的真实文件（root 挂载的 PWA 资源）"""
+    if path.endswith(STATIC_EXTENSIONS):
+        return True
+    if path in ("/manifest.json", "/sw.js"):
+        return True
+    return False
+
 # 无需服务级 API Key 认证的路径
+# 说明: /chat* 允许游客试用（靠限流保护）；/auth/* 允许注册登录；
+#       /conversations* 和 /iteration* 需要 JWT 或 API Key
 API_KEY_WHITELIST = {
     "/health",
     "/health/ready",
@@ -32,6 +53,8 @@ API_KEY_WHITELIST = {
     "/",
     "/auth/login",
     "/auth/register",
+    "/chat",
+    "/chat/stream",
 }
 
 # 完全跳过限流的路径（健康检查、静态文件、文档）
@@ -115,36 +138,52 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 # ═══════════════════════════════════════════
 
 class AuthMiddleware(BaseHTTPMiddleware):
-    """X-API-Key 认证中间件（服务级别，区别于用户 JWT）"""
+    """
+    服务级 API Key / 用户 JWT 双通道认证中间件
+    - 通道 1: X-API-Key 头 == service_api_key（第三方/服务间调用）
+    - 通道 2: Authorization: Bearer <JWT>（登录用户，见 agent.users.verify_token）
+    任一通过即可访问受保护端点。
+    """
 
     async def dispatch(self, request: Request, call_next):
         settings = get_settings()
 
-        # 认证未启用或路径在白名单中
+        # 认证未启用（SERVICE_API_KEY 为空）→ 全部放行
         if not settings.is_auth_enabled:
             return await call_next(request)
 
-        # 检查路径是否在白名单
+        # 检查路径是否在白名单（游客可试用 /chat、可注册登录 /auth）
         path = request.url.path.rstrip("/") or "/"
-        if path in API_KEY_WHITELIST or path.startswith("/static") or path.startswith("/auth/"):
+        if (
+            path in API_KEY_WHITELIST
+            or path.startswith("/static")
+            or path.startswith("/auth/")
+            or _is_static_asset(path)
+        ):
             return await call_next(request)
 
-        api_key = request.headers.get("X-API-Key") or request.headers.get(
-            "Authorization", ""
-        ).removeprefix("Bearer ")
+        # 通道 1: 服务级 API Key
+        api_key = request.headers.get("X-API-Key", "")
+        if api_key and api_key == settings.service_api_key:
+            return await call_next(request)
 
-        if not api_key or api_key != settings.service_api_key:
-            return JSONResponse(
-                status_code=401,
-                content=ErrorResponse(
-                    error="认证失败",
-                    detail="Missing or invalid X-API-Key header",
-                    code="AUTHENTICATION_FAILED",
-                    request_id=request_id_var.get(),
-                ).model_dump(),
-            )
+        # 通道 2: 用户级 JWT
+        auth = request.headers.get("Authorization", "")
+        if auth.startswith("Bearer "):
+            from agent.users import verify_token  # 惰性导入，避免启动期循环依赖
+            token = auth.removeprefix("Bearer ").strip()
+            if token and verify_token(token):
+                return await call_next(request)
 
-        return await call_next(request)
+        return JSONResponse(
+            status_code=401,
+            content=ErrorResponse(
+                error="认证失败",
+                detail="需要有效的 JWT Token（登录）或 X-API-Key",
+                code="AUTHENTICATION_FAILED",
+                request_id=request_id_var.get(),
+            ).model_dump(),
+        )
 
 
 # ═══════════════════════════════════════════

@@ -43,6 +43,9 @@
   </div>
   <h1>星 媛</h1>
   <span id="modelBadge" style="font-size:12px;color:var(--text3)"></span>
+  <button class="btn-icon" id="userBtn" onclick="toggleAuth()" title="登录/账户" aria-label="账户">
+    <svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 4-7 8-7s8 3 8 7"/></svg>
+  </button>
 </header>
 
 <div class="messages" id="messages">
@@ -59,6 +62,33 @@
   <button class="send-btn" id="sendBtn" onclick="send()" title="发送">
     <svg class="icon" viewBox="0 0 24 24"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9"/></svg>
   </button>
+</div>
+
+<!-- Auth Modal -->
+<div class="auth-overlay" id="authOverlay" onclick="closeAuth()">
+  <div class="auth-card" onclick="event.stopPropagation()">
+    <div class="auth-tabs">
+      <button class="auth-tab active" id="tabLogin" onclick="setAuthTab('login')">登录</button>
+      <button class="auth-tab" id="tabRegister" onclick="setAuthTab('register')">注册</button>
+    </div>
+    <form id="authForm" onsubmit="return false;">
+      <div class="auth-field">
+        <label for="authUser">用户名</label>
+        <input id="authUser" type="text" maxlength="30" autocomplete="username" placeholder="2-30 位字母、数字、下划线"/>
+      </div>
+      <div class="auth-field">
+        <label for="authPass">密码</label>
+        <input id="authPass" type="password" maxlength="100" autocomplete="current-password" placeholder="至少 8 位，含字母和数字"/>
+      </div>
+      <div class="auth-field register-only" id="nickField" style="display:none">
+        <label for="authNick">昵称（可选）</label>
+        <input id="authNick" type="text" maxlength="30" autocomplete="nickname" placeholder="默认使用用户名"/>
+      </div>
+      <div class="auth-hint" id="authHint"></div>
+      <button class="auth-submit" id="authSubmit" type="submit" onclick="submitAuth()">登 录</button>
+    </form>
+    <div class="auth-note">登录后可跨设备同步对话历史</div>
+  </div>
 </div>
 
 <div class="toast" id="toast"></div>
