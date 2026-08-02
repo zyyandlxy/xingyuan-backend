@@ -96,7 +96,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             "script-src 'self' 'unsafe-inline'; "
             "style-src 'self' 'unsafe-inline'; "
             "img-src 'self' data:; "
-            "connect-src 'self' https:; "
+            "connect-src 'self' http: https:; "
             "font-src 'self'; "
             "object-src 'none'; "
             "base-uri 'self'; "

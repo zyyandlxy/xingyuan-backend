@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import uuid
 from datetime import datetime, timezone
@@ -344,18 +345,23 @@ async def _execute(db: aiosqlite.Connection, sql: str, params=()):
 # ═══════════════════════════════════════════
 
 _store: ConversationStore | None = None
+_store_lock = asyncio.Lock()
 
 
 async def get_store(db_path: str | None = None) -> ConversationStore:
-    """获取全局存储实例"""
+    """获取全局存储实例（线程安全）"""
     global _store
-    if _store is None:
+    if _store is not None:
+        return _store
+    async with _store_lock:
+        if _store is not None:
+            return _store
         from agent.config import get_settings
 
         path = db_path or get_settings().database_path
         _store = ConversationStore(path)
         await _store.init()
-    return _store
+        return _store
 
 
 async def close_store() -> None:

@@ -18,7 +18,25 @@ from agent.store import _execute, _fetchone, _fetchall
 # JWT 配置
 # ═══════════════════════════════════════════
 
-JWT_SECRET = os.getenv("JWT_SECRET", "xingyuan-jwt-secret-v1")
+def _load_or_generate_jwt_secret() -> str:
+    """从环境变量或持久化文件加载 JWT 密钥，不存在则随机生成"""
+    secret = os.getenv("JWT_SECRET", "")
+    if secret:
+        return secret
+    secret_file = os.path.join(os.path.dirname(__file__), "..", "data", ".jwt_secret")
+    try:
+        with open(secret_file) as f:
+            return f.read().strip()
+    except FileNotFoundError:
+        import secrets
+        new_secret = secrets.token_hex(32)
+        os.makedirs(os.path.dirname(secret_file), exist_ok=True)
+        with open(secret_file, "w") as f:
+            f.write(new_secret)
+        return new_secret
+
+
+JWT_SECRET = _load_or_generate_jwt_secret()
 JWT_EXPIRE_SECONDS = 7 * 24 * 3600  # Token 7 天过期
 
 
@@ -203,7 +221,7 @@ async def login_user(username: str, password: str, ip: str = "", device: str = "
         "nickname": row["nickname"] or row["username"],
         "token": token,
         "login_count": login_count,
-        "last_login": row["last_login"],
+        "last_login": now,
     }
 
 

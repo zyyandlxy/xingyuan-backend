@@ -13,11 +13,13 @@ from fastapi import APIRouter, Header, HTTPException
 from loguru import logger
 from sse_starlette.sse import EventSourceResponse
 
+import uuid
+
 from agent.chat import chat, chat_stream
 from agent.config import get_settings
 from agent.exceptions import AppException, ProviderError, ProviderAuthError
 from agent.middleware import request_id_var
-from agent.models import ChatRequest, ChatResponse, ErrorResponse
+from agent.models import ChatRequest, ChatResponse, ErrorResponse, Message
 from agent.iteration import generate_persona_prompt, init_iteration_tables, learn_from_message
 from agent.store import get_store
 from agent.users import verify_token
@@ -26,18 +28,21 @@ router = APIRouter()
 
 
 def _get_user(authorization: str) -> dict:
-    """从 Authorization Header 解析用户"""
+    """从 Authorization Header 解析用户，无 token 则返回游客"""
     token = authorization.removeprefix("Bearer ").strip()
     if not token:
-        raise HTTPException(status_code=401, detail="请先登录")
+        return {"sub": f"guest_{uuid.uuid4().hex[:12]}", "usr": "guest", "is_guest": True}
     payload = verify_token(token)
     if not payload:
-        raise HTTPException(status_code=401, detail="Token 无效或已过期")
+        return {"sub": f"guest_{uuid.uuid4().hex[:12]}", "usr": "guest", "is_guest": True}
+    payload["is_guest"] = False
     return payload
 
 
-async def _learn_and_personalize(request: ChatRequest, user_id: str):
-    """自动学习 + 注入个性化提示词"""
+async def _learn_and_personalize(request: ChatRequest, user_id: str, is_guest: bool = False):
+    """自动学习 + 注入个性化提示词（游客跳过）"""
+    if is_guest:
+        return
     await init_iteration_tables()
     for msg in request.messages:
         if msg.role == "user" and len(msg.content) > 2:
@@ -69,10 +74,11 @@ async def chat_endpoint(
     """发送消息，返回完整 AI 回复。需登录。"""
     user = _get_user(authorization)
     user_id = user["sub"]
+    is_guest = user.get("is_guest", False)
     settings = get_settings()
     store = await get_store()
 
-    await _learn_and_personalize(request, user_id)
+    await _learn_and_personalize(request, user_id, is_guest)
 
     conv_id = request.conversation_id
     if not conv_id:
@@ -86,18 +92,16 @@ async def chat_endpoint(
         await store.add_message(cid, msg.role, msg.content,
                                 name=msg.name, tool_call_id=msg.tool_call_id)
 
-    try:
-        for msg in request.messages:
-            if msg.role != "system":
-                await save_msg(conv_id, msg)
+    # 先持久化用户消息
+    for msg in request.messages:
+        if msg.role != "system":
+            await save_msg(conv_id, msg)
 
+    try:
         response = await chat(request, conv_id)
 
         if response.content:
-            await save_msg(conv_id, type("Msg", (), {
-                "role": "assistant", "content": response.content,
-                "name": None, "tool_call_id": None,
-            })())
+            await save_msg(conv_id, Message(role="assistant", content=response.content))
 
         return response
 
@@ -120,10 +124,11 @@ async def chat_stream_endpoint(
     """流式聊天，需登录。"""
     user = _get_user(authorization)
     user_id = user["sub"]
+    is_guest = user.get("is_guest", False)
     settings = get_settings()
     store = await get_store()
 
-    await _learn_and_personalize(request, user_id)
+    await _learn_and_personalize(request, user_id, is_guest)
 
     conv_id = request.conversation_id
     if not conv_id:
@@ -136,7 +141,8 @@ async def chat_stream_endpoint(
     # 先持久化用户消息
     for msg in request.messages:
         if msg.role != "system":
-            await store.add_message(conv_id, msg.role, msg.content)
+            await store.add_message(conv_id, msg.role, msg.content,
+                                    name=msg.name, tool_call_id=msg.tool_call_id)
 
     async def event_generator():
         full_content = ""

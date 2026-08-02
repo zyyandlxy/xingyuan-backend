@@ -91,7 +91,12 @@ async def lifespan(app: FastAPI):
     from agent.iteration import init_iteration_tables
     await init_user_tables()
     await init_iteration_tables()
-    logger.bind(request_id="startup").info("数据库初始化完成")
+
+    # WAL checkpoint — 每次启动合并 WAL 防止膨胀
+    import aiosqlite
+    async with aiosqlite.connect(settings.database_path) as wal_db:
+        await wal_db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    logger.bind(request_id="startup").info("数据库初始化完成 (WAL checkpoint 已执行)")
 
     yield
 
@@ -109,7 +114,7 @@ def create_app() -> FastAPI:
 
     app = FastAPI(
         title="星媛 Agent API",
-        version="2.0.0",
+        version="2.5.0",
         description="星媛 AI Agent — 智谱 GLM、流式 SSE、工具调用、自我迭代、PWA",
         lifespan=lifespan,
         docs_url="/docs",

@@ -176,17 +176,25 @@ async def generate_persona_prompt(user_id: str) -> str:
     # 根据记忆添加个性适配
     parts = [base]
 
-    # 用户偏好
+    # 用户偏好（清理注入风险）
     prefs = [m for m in memories if m["category"] == "preference" and m["confidence"] > 0.3]
     if prefs:
-        pref_str = "；".join(f"{p['key']}={p['value']}" for p in prefs[:10])
-        parts.append(f"用户偏好: {pref_str}。请据此调整回复风格和内容。")
+        safe = []
+        for p in prefs[:10]:
+            val = str(p["value"])[:200].replace("\n", " ").replace("\r", "")
+            key = str(p["key"])[:50].replace("\n", " ").replace("\r", "")
+            safe.append(f"{key}={val}")
+        parts.append(f"用户偏好: {'；'.join(safe)}。请据此调整回复风格和内容。")
 
     # 用户信息
     info = [m for m in memories if m["category"] == "user_info" and m["confidence"] > 0.5]
     if info:
-        info_str = "；".join(f"{i['key']}: {i['value']}" for i in info[:10])
-        parts.append(f"关于用户的信息: {info_str}。在恰当的时候自然地引用这些信息。")
+        safe = []
+        for i in info[:10]:
+            val = str(i["value"])[:200].replace("\n", " ").replace("\r", "")
+            key = str(i["key"])[:50].replace("\n", " ").replace("\r", "")
+            safe.append(f"{key}: {val}")
+        parts.append(f"关于用户的信息: {'；'.join(safe)}。在恰当的时候自然地引用这些信息。")
 
     # 交互模式
     patterns = [m for m in memories if m["category"] == "pattern"]

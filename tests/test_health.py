@@ -8,7 +8,7 @@ def test_health(client):
     data = resp.json()
     assert data["status"] == "ok"
     assert "version" in data
-    assert "model" in data
+    assert "auth_enabled" in data
 
 
 def test_ready(client):

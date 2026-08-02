@@ -12,7 +12,7 @@ services:
     build: .
     container_name: xingyuan-backend
     ports:
-      - "${PORT:-8000}:8000"
+      - "${PORT:-8000}:8080"
     environment:
       - ZHIPUAI_API_KEY=${ZHIPUAI_API_KEY}
       - ZHIPUAI_MODEL=${ZHIPUAI_MODEL:-glm-4-flash}
@@ -25,7 +25,7 @@ services:
       - ./logs:/app/logs
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
       interval: 30s
       timeout: 5s
       retries: 3

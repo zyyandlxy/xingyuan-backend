@@ -223,26 +223,26 @@ function streamChat(text) {
           var lines = buf.split('\n');
           buf = lines.pop() || '';
 
+          var eventName = null;
           for (var _i = 0, lines_1 = lines; _i < lines_1.length; _i++) {
-            var line = lines_1[_i];
+            var line = lines_1[_i].replace(/\r$/, '');
+            if (line.startsWith('event:')) {
+              eventName = line.slice(6).trim();
+              continue;
+            }
             if (!line.startsWith('data:')) continue;
             var data = line.slice(5).trim();
             if (!data || data === '[DONE]') continue;
 
             try {
               var parsed = JSON.parse(data);
-              if (parsed.event === 'done') {
-                var dd = typeof parsed.data === 'string' ? JSON.parse(parsed.data) : parsed.data;
-                convId = dd.conversation_id;
-              } else if (parsed.event === 'error') {
-                var errData = typeof parsed.data === 'string' ? JSON.parse(parsed.data) : parsed.data;
-                bubble.textContent = '⚠️ ' + (errData.error || '未知错误');
-              } else if (parsed.event === 'delta') {
-                var deltaData = typeof parsed.data === 'string' ? JSON.parse(parsed.data) : parsed.data;
-                if (deltaData.delta) {
-                  bubble.textContent += deltaData.delta;
-                  scrollBottom();
-                }
+              if (eventName === 'done') {
+                if (parsed.conversation_id) convId = parsed.conversation_id;
+              } else if (eventName === 'error') {
+                bubble.textContent = '⚠️ ' + (parsed.error || '未知错误');
+              } else if (eventName === 'delta' && parsed.delta) {
+                bubble.textContent += parsed.delta;
+                scrollBottom();
               }
             } catch (e) { /* skip parse errors */ }
           }

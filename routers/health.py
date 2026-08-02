@@ -18,7 +18,7 @@ async def health():
     settings = get_settings()
     return {
         "status": "ok",
-        "version": "2.0.0",
+        "version": "2.5.0",
         "auth_enabled": settings.is_auth_enabled,
     }
 
