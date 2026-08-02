@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+import uuid
+
 from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel
 
@@ -16,12 +18,13 @@ router = APIRouter()
 
 
 def _get_user_id(auth: str) -> str:
+    """从 Authorization Header 解析用户 ID，无 token 则返回游客 ID"""
     token = auth.removeprefix("Bearer ").strip()
     if not token:
-        raise HTTPException(status_code=401, detail="请先登录")
+        return f"guest_{uuid.uuid4().hex[:12]}"
     payload = verify_token(token)
     if not payload:
-        raise HTTPException(status_code=401, detail="Token 无效")
+        return f"guest_{uuid.uuid4().hex[:12]}"
     return payload["sub"]
 
 
