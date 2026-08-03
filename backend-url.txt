@@ -1,2 +1,2 @@
 http://192.168.1.200:8000
-https://associated-spas-old-campaign.trycloudflare.com
+https://parcel-blvd-afterwards-diff.trycloudflare.com
