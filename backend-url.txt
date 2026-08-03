@@ -1,2 +1,2 @@
 http://192.168.1.200:8000
-https://letter-maui-behavior-drama.trycloudflare.com
+https://philip-cameron-spa-livecam.trycloudflare.com
