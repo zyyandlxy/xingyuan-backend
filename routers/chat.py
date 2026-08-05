@@ -17,7 +17,7 @@ import uuid
 
 from agent.chat import chat, chat_stream
 from agent.config import get_settings
-from agent.exceptions import AppException, ProviderError, ProviderAuthError
+from agent.exceptions import AppException, ProviderError, ProviderAuthError, ProviderTimeoutError
 from agent.middleware import request_id_var
 from agent.models import ChatRequest, ChatResponse, ErrorResponse, Message
 from agent.iteration import generate_persona_prompt, init_iteration_tables, learn_from_message
@@ -27,16 +27,35 @@ from agent.users import verify_token
 router = APIRouter()
 
 
-def _get_user(authorization: str) -> dict:
-    """从 Authorization Header 解析用户，无 token 则返回游客"""
+def _get_user(authorization: str, x_guest_id: str = "") -> dict:
+    """从 Authorization Header 解析用户；无 token 则使用 X-Guest-ID 或生成随机游客 ID"""
     token = authorization.removeprefix("Bearer ").strip()
     if not token:
-        return {"sub": f"guest_{uuid.uuid4().hex[:12]}", "usr": "guest", "is_guest": True}
+        guest_id = x_guest_id.strip() or f"guest_{uuid.uuid4().hex[:12]}"
+        return {"sub": guest_id, "usr": "guest", "is_guest": True}
     payload = verify_token(token)
     if not payload:
-        return {"sub": f"guest_{uuid.uuid4().hex[:12]}", "usr": "guest", "is_guest": True}
+        guest_id = x_guest_id.strip() or f"guest_{uuid.uuid4().hex[:12]}"
+        return {"sub": guest_id, "usr": "guest", "is_guest": True}
     payload["is_guest"] = False
     return payload
+
+# ═══════════════════════════════════════════
+# ZhipuAI 错误 → 应用异常映射
+# ═══════════════════════════════════════════
+
+def _classify_provider_error(e: Exception) -> AppException:
+    """将 zhipuai SDK 异常映射为应用层异常"""
+    etype = type(e).__name__
+    emsg = str(e).lower()
+
+    if "timeout" in etype.lower() or "timeout" in emsg:
+        return ProviderTimeoutError("AI 服务响应超时，请稍后重试")
+    if "auth" in etype.lower() or "authentication" in etype.lower() or "unauthorized" in emsg:
+        return ProviderAuthError("AI 服务认证失败，请联系管理员")
+    if "flowexceed" in etype.lower() or "rate" in emsg or "quota" in emsg:
+        return ProviderError("AI 服务流量超限，请稍后重试")
+    return ProviderError("AI 服务暂时不可用，请稍后重试")
 
 
 async def _learn_and_personalize(request: ChatRequest, user_id: str, is_guest: bool = False):
@@ -70,9 +89,10 @@ async def _learn_and_personalize(request: ChatRequest, user_id: str, is_guest: b
 async def chat_endpoint(
     request: ChatRequest,
     authorization: str = Header(default=""),
+    x_guest_id: str = Header(default="", alias="X-Guest-ID"),
 ):
     """发送消息，返回完整 AI 回复。需登录。"""
-    user = _get_user(authorization)
+    user = _get_user(authorization, x_guest_id)
     user_id = user["sub"]
     is_guest = user.get("is_guest", False)
     settings = get_settings()
@@ -107,22 +127,25 @@ async def chat_endpoint(
 
     except ProviderAuthError:
         raise HTTPException(status_code=502, detail="AI 服务认证失败，请联系管理员")
+    except ProviderTimeoutError:
+        raise HTTPException(status_code=504, detail="AI 服务响应超时，请稍后重试")
     except ProviderError as e:
         raise HTTPException(status_code=502, detail=str(e))
     except AppException as e:
         raise HTTPException(status_code=e.status_code, detail=str(e))
     except Exception as e:
-        logger.error(f"聊天错误: {traceback.format_exc()}")
-        raise HTTPException(status_code=500, detail="服务内部错误")
+        classified = _classify_provider_error(e)
+        raise HTTPException(status_code=classified.status_code, detail=str(classified.detail or str(classified)))
 
 
 @router.post("/stream", summary="流式聊天（SSE）")
 async def chat_stream_endpoint(
     request: ChatRequest,
     authorization: str = Header(default=""),
+    x_guest_id: str = Header(default="", alias="X-Guest-ID"),
 ):
     """流式聊天，需登录。"""
-    user = _get_user(authorization)
+    user = _get_user(authorization, x_guest_id)
     user_id = user["sub"]
     is_guest = user.get("is_guest", False)
     settings = get_settings()
@@ -161,6 +184,7 @@ async def chat_stream_endpoint(
 
         except Exception as e:
             logger.error(f"流式错误: {traceback.format_exc()}")
+            classified = _classify_provider_error(e)
             # 连接断开时也保存已收到的部分内容
             if full_content:
                 try:
@@ -168,9 +192,9 @@ async def chat_stream_endpoint(
                 except Exception:
                     pass
             yield {"event": "error", "data": json.dumps({
-                "error": "流式传输中断",
+                "error": str(classified.detail or str(classified)),
+                "code": classified.error_code or "PROVIDER_ERROR",
                 "partial_chars": len(full_content),
-                "code": "STREAM_ERROR",
             })}
 
     return EventSourceResponse(event_generator())

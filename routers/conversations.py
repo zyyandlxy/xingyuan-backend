@@ -17,14 +17,14 @@ from agent.users import verify_token
 router = APIRouter()
 
 
-def _get_user_id(auth: str) -> str:
-    """从 Authorization Header 解析用户 ID，无 token 则返回游客 ID"""
+def _get_user_id(auth: str, x_guest_id: str = "") -> str:
+    """从 Authorization Header 解析用户 ID；无 token 则使用 X-Guest-ID 或生成随机游客 ID"""
     token = auth.removeprefix("Bearer ").strip()
     if not token:
-        return f"guest_{uuid.uuid4().hex[:12]}"
+        return x_guest_id.strip() or f"guest_{uuid.uuid4().hex[:12]}"
     payload = verify_token(token)
     if not payload:
-        return f"guest_{uuid.uuid4().hex[:12]}"
+        return x_guest_id.strip() or f"guest_{uuid.uuid4().hex[:12]}"
     return payload["sub"]
 
 
@@ -37,8 +37,9 @@ class CreateConvBody(BaseModel):
 async def create_conversation(
     body: CreateConvBody,
     authorization: str = Header(default=""),
+    x_guest_id: str = Header(default="", alias="X-Guest-ID"),
 ):
-    user_id = _get_user_id(authorization)
+    user_id = _get_user_id(authorization, x_guest_id)
     store = await get_store()
     settings = get_settings()
 
@@ -62,8 +63,9 @@ async def create_conversation(
 async def list_conversations(
     page: int = 1, page_size: int = 30,
     authorization: str = Header(default=""),
+    x_guest_id: str = Header(default="", alias="X-Guest-ID"),
 ):
-    user_id = _get_user_id(authorization)
+    user_id = _get_user_id(authorization, x_guest_id)
     store = await get_store()
     items, total = await store.list_conversations(user_id=user_id, page=page, page_size=page_size)
     return ConversationList(items=items, total=total, page=page, page_size=page_size)
@@ -73,8 +75,9 @@ async def list_conversations(
 async def get_conversation(
     conv_id: str,
     authorization: str = Header(default=""),
+    x_guest_id: str = Header(default="", alias="X-Guest-ID"),
 ):
-    user_id = _get_user_id(authorization)
+    user_id = _get_user_id(authorization, x_guest_id)
     store = await get_store()
     detail = await store.get_conversation(conv_id, user_id=user_id)
     if not detail:
@@ -86,8 +89,9 @@ async def get_conversation(
 async def delete_conversation(
     conv_id: str,
     authorization: str = Header(default=""),
+    x_guest_id: str = Header(default="", alias="X-Guest-ID"),
 ):
-    user_id = _get_user_id(authorization)
+    user_id = _get_user_id(authorization, x_guest_id)
     store = await get_store()
     deleted = await store.delete_conversation(conv_id, user_id=user_id)
     if not deleted:

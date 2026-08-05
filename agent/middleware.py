@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import os
 import time
 import uuid
 from contextvars import ContextVar
@@ -68,8 +69,8 @@ RATE_LIMIT_WHITELIST = {
     "/",
 }
 
-# Auth 端点专用限流：每分钟 5 次（防暴力破解）
-AUTH_RATE_LIMIT = 5
+# Auth 端点专用限流：每分钟 5 次（防暴力破解）。可通过 AUTH_RATE_LIMIT 环境变量覆盖
+AUTH_RATE_LIMIT = int(os.getenv("AUTH_RATE_LIMIT", "5"))
 
 
 # ═══════════════════════════════════════════
@@ -217,6 +218,9 @@ class RateLimitMiddleware:
             return
 
         rate = AUTH_RATE_LIMIT if is_auth_path else settings.rate_limit_per_minute
+        if is_auth_path and rate <= 0:
+            await self.app(scope, receive, send)
+            return
 
         # 获取客户端 IP
         fwd = next(

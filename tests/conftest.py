@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 import os
-import tempfile
+import uuid
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -15,10 +14,10 @@ from fastapi.testclient import TestClient
 def clean_env():
     """每个测试前清理环境变量"""
     old = os.environ.copy()
-    # 设置测试环境
     os.environ["ZHIPUAI_API_KEY"] = "test-api-key"
     os.environ["SERVICE_API_KEY"] = ""  # 测试时不启用认证
     os.environ["RATE_LIMIT_PER_MINUTE"] = "0"  # 不限流
+    os.environ["AUTH_RATE_LIMIT"] = "0"  # 测试不限认证限流
     yield
     os.environ.clear()
     os.environ.update(old)
@@ -39,21 +38,28 @@ def settings():
 @pytest.fixture
 def client(tmp_path, monkeypatch):
     """FastAPI 测试客户端，使用临时目录"""
-    # 使用临时目录存放数据库
     db_path = tmp_path / "test.db"
 
-    from agent.config import get_settings
-
-    # 在第一次导入前设置环境
     monkeypatch.setenv("ZHIPUAI_API_KEY", "test-api-key")
     monkeypatch.setenv("DATABASE_PATH", str(db_path))
     monkeypatch.setenv("RATE_LIMIT_PER_MINUTE", "0")
     monkeypatch.setenv("SERVICE_API_KEY", "")
 
-    # 强制重新加载配置
     from agent.config import reload_settings
     reload_settings()
 
     from main import app
     with TestClient(app) as c:
         yield c
+
+
+@pytest.fixture
+def auth_headers(client):
+    """注册测试用户并返回带 JWT 的 Authorization header"""
+    name = f"t{uuid.uuid4().hex[:10]}"
+    reg = client.post(
+        "/auth/register",
+        json={"username": name, "password": "TestPass123"},
+    )
+    token = reg.json()["data"]["token"]
+    return {"Authorization": f"Bearer {token}"}

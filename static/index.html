@@ -2,8 +2,8 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8"/>
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no"/>
-<meta name="theme-color" content="#0f172a"/>
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover"/>
+<meta name="theme-color" content="#0a0a1a"/>
 <meta name="apple-mobile-web-app-capable" content="yes"/>
 <meta name="mobile-web-app-capable" content="yes"/>
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
@@ -17,82 +17,99 @@
 </head>
 <body>
 
+<!-- Auth Screen -->
+<div class="screen active" id="authScreen">
+  <div class="auth-logo">
+    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l2.4 7.2h7.6l-6 4.8 2.4 7.2-6.4-4.8-6.4 4.8 2.4-7.2-6-4.8h7.6z"/></svg>
+  </div>
+  <div class="auth-title">星 媛</div>
+  <div class="auth-subtitle">你的专属 AI 智能助手</div>
+  <div class="auth-tabs">
+    <button class="auth-tab active" onclick="swAt('login')">登录</button>
+    <button class="auth-tab" onclick="swAt('reg')">注册</button>
+  </div>
+  <form class="auth-form" id="loginForm" onsubmit="doLogin(event)">
+    <label>用户名</label><input id="lu" type="text" placeholder="输入用户名" required/>
+    <label>密码</label><input id="lp" type="password" placeholder="输入密码" required/>
+    <button class="btn-primary" type="submit" id="lb">登 录</button>
+  </form>
+  <form class="auth-form" id="regForm" style="display:none" onsubmit="doReg(event)">
+    <label>用户名</label><input id="ru" type="text" placeholder="2-30字符" minlength="2" maxlength="30" required/>
+    <label>昵称</label><input id="rn" type="text" placeholder="给自己取个名字"/>
+    <label>密码</label><input id="rp" type="password" placeholder="至少8位，含字母和数字" minlength="8" required/>
+    <label>确认密码</label><input id="rp2" type="password" placeholder="再次输入" minlength="8" required/>
+    <button class="btn-primary" type="submit" id="rb">注 册</button>
+  </form>
+</div>
+
+<!-- Sidebar Overlay -->
+<div class="sb-overlay" id="ov" onclick="closeSb()"></div>
+
 <!-- Sidebar -->
-<div class="sidebar" id="sidebar">
-  <div class="sidebar-header">
-    <h2>对话历史</h2>
-    <button class="btn-icon" onclick="toggleSidebar()">
-      <svg class="icon" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+<div id="sidebar">
+  <div class="sb-inner">
+    <div class="sb-hd">
+      <h2>💬 历史会话</h2>
+      <button class="btn-i" onclick="closeSb()">
+        <svg class="icon" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <button class="new-cv" onclick="newChat()">
+      <svg class="icon" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+      新建对话
+    </button>
+    <div class="sb-list" id="cvList"></div>
+    <div class="sb-menu">
+      <div class="m-item" onclick="showMem()">
+        <svg class="icon" viewBox="0 0 24 24"><path d="M12 2a4 4 0 0 1 4 4c0 1.2-.5 2.3-1.3 3a4 4 0 0 1 0 6 4 4 0 1 1-5.4-6 4 4 0 0 1 0-6A4 4 0 0 1 12 2z"/><path d="M12 6v12"/></svg>
+        星媛的记忆
+      </div>
+      <div class="m-item logout" onclick="logout()">
+        <svg class="icon" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+        退出登录
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Chat Screen -->
+<div class="screen" id="chatScreen">
+  <div class="app-header">
+    <div class="av">
+      <svg class="icon" viewBox="0 0 24 24" stroke="currentColor" fill="none"><path d="M12 2l2.4 7.2h7.6l-6 4.8 2.4 7.2-6.4-4.8-6.4 4.8 2.4-7.2-6-4.8h7.6z"/></svg>
+    </div>
+    <div class="hi">
+      <div class="hn">星 媛</div>
+      <div class="hs" id="sb">
+        <svg style="width:8px;height:8px;fill:#22c55e" viewBox="0 0 8 8"><circle cx="4" cy="4" r="3"/></svg>
+        在线
+      </div>
+    </div>
+    <span style="font-size:11px;color:var(--text3)" id="ul"></span>
+    <button class="btn-i" onclick="openSb()">
+      <svg class="icon" viewBox="0 0 24 24"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
     </button>
   </div>
-  <button class="new-chat-btn" onclick="newChat()">
-    <svg class="icon" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-    新建对话
-  </button>
-  <div class="sidebar-list" id="sidebarList"></div>
-</div>
-<div class="overlay" id="overlay" onclick="toggleSidebar()"></div>
-
-<!-- Main -->
-<header>
-  <button class="btn-icon" onclick="toggleSidebar()">
-    <svg class="icon" viewBox="0 0 24 24"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
-  </button>
-  <div class="logo">
-    <svg class="icon" viewBox="0 0 24 24"><path d="M12 2l2.4 7.2h7.6l-6 4.8 2.4 7.2-6.4-4.8-6.4 4.8 2.4-7.2-6-4.8h7.6z"/></svg>
-  </div>
-  <h1>星 媛</h1>
-  <span id="modelBadge" style="font-size:12px;color:var(--text3)"></span>
-  <button class="btn-icon" id="userBtn" onclick="toggleAuth()" title="登录/账户" aria-label="账户">
-    <svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 4-7 8-7s8 3 8 7"/></svg>
-  </button>
-</header>
-
-<div class="messages" id="messages">
-  <div class="msg system">
-    <div class="msg-bubble">
-      <svg class="icon" viewBox="0 0 24 24" style="width:28px;height:28px;color:var(--accent);margin-bottom:8px"><path d="M12 2l2.4 7.2h7.6l-6 4.8 2.4 7.2-6.4-4.8-6.4 4.8 2.4-7.2-6-4.8h7.6z"/></svg><br>
-      你好！我是星媛，基于智谱 AI GLM 驱动。<br>可以聊天、写代码、回答问题。开始对话吧～
+  <div class="msg-list" id="ml">
+    <div class="msg-row system">
+      <div class="msg-b">
+        <svg class="icon" viewBox="0 0 24 24" style="width:28px;height:28px;color:var(--accent);margin-bottom:8px"><path d="M12 2l2.4 7.2h7.6l-6 4.8 2.4 7.2-6.4-4.8-6.4 4.8 2.4-7.2-6-4.8h7.6z"/></svg><br>
+        你好，我是星媛
+      </div>
     </div>
   </div>
-</div>
-
-<div class="input-area">
-  <textarea id="input" rows="1" placeholder="输入消息..." onkeydown="onKeyDown(event)" oninput="autoResize()"></textarea>
-  <button class="send-btn" id="sendBtn" onclick="send()" title="发送">
-    <svg class="icon" viewBox="0 0 24 24"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9"/></svg>
-  </button>
-</div>
-
-<!-- Auth Modal -->
-<div class="auth-overlay" id="authOverlay" onclick="closeAuth()">
-  <div class="auth-card" onclick="event.stopPropagation()">
-    <div class="auth-tabs">
-      <button class="auth-tab active" id="tabLogin" onclick="setAuthTab('login')">登录</button>
-      <button class="auth-tab" id="tabRegister" onclick="setAuthTab('register')">注册</button>
-    </div>
-    <form id="authForm" onsubmit="return false;">
-      <div class="auth-field">
-        <label for="authUser">用户名</label>
-        <input id="authUser" type="text" maxlength="30" autocomplete="username" placeholder="2-30 位字母、数字、下划线"/>
-      </div>
-      <div class="auth-field">
-        <label for="authPass">密码</label>
-        <input id="authPass" type="password" maxlength="100" autocomplete="current-password" placeholder="至少 8 位，含字母和数字"/>
-      </div>
-      <div class="auth-field register-only" id="nickField" style="display:none">
-        <label for="authNick">昵称（可选）</label>
-        <input id="authNick" type="text" maxlength="30" autocomplete="nickname" placeholder="默认使用用户名"/>
-      </div>
-      <div class="auth-hint" id="authHint"></div>
-      <button class="auth-submit" id="authSubmit" type="submit" onclick="submitAuth()">登 录</button>
-    </form>
-    <div class="auth-note">登录后可跨设备同步对话历史</div>
+  <div class="input-bar">
+    <textarea id="inp" rows="1" placeholder="给星媛发消息..." onkeydown="kd(event)" oninput="autoResize(this)"></textarea>
+    <button class="send-btn" id="sbtn" onclick="send()">
+      <svg class="icon" viewBox="0 0 24 24"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9"/></svg>
+    </button>
   </div>
 </div>
 
 <div class="toast" id="toast"></div>
 
+<!-- Scripts -->
 <script src="js/app.js"></script>
+<script>if('serviceWorker' in navigator){navigator.serviceWorker.register('/sw.js')}</script>
 </body>
 </html>
