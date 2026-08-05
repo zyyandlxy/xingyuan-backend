@@ -41,7 +41,8 @@ def _load_or_generate_jwt_secret() -> str:
 
 
 JWT_SECRET = _load_or_generate_jwt_secret()
-JWT_EXPIRE_SECONDS = 7 * 24 * 3600  # Token 7 天过期
+# 登录有效期 1 年 —— 用户只需登录一次，跨年不再要求重新登录
+JWT_EXPIRE_SECONDS = 365 * 24 * 3600
 
 
 def create_token(user_id: str, username: str) -> str:
@@ -124,12 +125,19 @@ def validate_username(username: str) -> str | None:
 # 用户操作
 # ═══════════════════════════════════════════
 
+_user_tables_ready = False
+
+
 async def init_user_tables():
-    """初始化用户相关表"""
+    """初始化用户相关表（DDL 只执行一次，后续调用直接跳过）"""
+    global _user_tables_ready
+    if _user_tables_ready:
+        return
     from agent.store import get_store
     store = await get_store()
     async with _tx(store) as db:
         await db.execute(USER_TABLES_SQL)
+    _user_tables_ready = True
 
 
 async def register_user(username: str, password: str, nickname: str = "") -> dict:

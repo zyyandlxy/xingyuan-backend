@@ -110,6 +110,17 @@
 
 <!-- Scripts -->
 <script src="js/app.js"></script>
-<script>if('serviceWorker' in navigator){navigator.serviceWorker.register('/sw.js')}</script>
+<script>
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/sw.js');
+  // SW 更新接管后强制刷新一次（sessionStorage 防循环），
+  // 保证老用户不再命中旧版缓存的 index.html
+  navigator.serviceWorker.addEventListener('controllerchange', function () {
+    if (sessionStorage.getItem('sw-v3-refreshed')) return;
+    sessionStorage.setItem('sw-v3-refreshed', '1');
+    location.reload();
+  });
+}
+</script>
 </body>
 </html>

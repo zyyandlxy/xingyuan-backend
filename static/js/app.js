@@ -510,28 +510,18 @@ function enterChat() {
 
 async function init() {
   // ── 0. 立即检查是否有已保存 token ──
-  //    (不等寻址，先检查本地储存)
   T = await Store.get('xyt');
   U = await Store.getJSON('xyu');
   var hasSavedToken = !!(T && U);
 
-  // ── 1. 获取后端地址 ──
-  //    PWA 模式（浏览器直接访问）：直接用当前域名，跳过寻址
-  //    Capacitor/App 模式：bootstrap 寻址
   var isPWA = window.location.protocol.startsWith('http') && !window.Capacitor;
-  if (isPWA) {
-    // PWA：前端和后端同域，直接用相对路径
-    A = '';
-    // 快速验证（可选，超时设为 3s）
-    try {
-      var r = await fetch('/health', { signal: AbortSignal.timeout(3000) });
-      var d = await r.json();
-      if (d.status !== 'ok') A = '';
-    } catch (e) { A = ''; }
-  }
 
-  if (!A) {
-    // App 模式：缓存优先 → 多源引导 → 兜底
+  // ── 1. 寻址 ──
+  //    PWA：前后端同域，直接用相对路径，跳过引导（省掉每次打开的额外网络等待）
+  //    Capacitor/App：缓存优先 → 多源引导 → 兜底
+  if (isPWA) {
+    A = '';
+  } else {
     for (var attempt = 0; attempt < 3; attempt++) {
       A = await Store.get('xy_api');
       if (A) {
@@ -567,40 +557,45 @@ async function init() {
     }
   }
 
-  // ── 2. 恢复会话（token 已在步骤 0 读取） ──
+  // ── 2. 恢复会话 ──
+  //    有本地 token：立即进聊天（不阻塞等待网络），后台再校验 token 有效性
   if (hasSavedToken) {
-    if (A) {
-      // 有网：验证 token 是否仍有效
-      var tokenOk = false;
-      try {
-        var mr = await fetch(A + '/auth/me', {
-          headers: { 'Authorization': 'Bearer ' + T },
-        });
-        if (mr.ok) {
-          U = (await mr.json()).data;
-          await Store.setJSON('xyu', U);
-          tokenOk = true;
-        }
-        // 401 = token 已失效，清除
-        if (mr.status === 401) {
-          T = ''; U = null;
-          await Store.remove('xyt');
-          await Store.remove('xyu');
-        }
-      } catch (e) { /* 网络波动，token 可能仍有效，放行 */ }
-      if (tokenOk || T) { enterChat(); return; }
-    } else {
-      // 没网但有本地 token → 直接进聊天（离线可用），等网络恢复会校验
-      enterChat();
-      return;
+    enterChat();
+    if (isPWA || A) {
+      validateTokenBackground(isPWA ? '' : A);
     }
+    return;
   }
 
-  // ── 3. 没有有效 token → 停留在登录页 ──
-  if (!A) {
+  // ── 3. 没有有效 token → 停留登录页 ──
+  if (!isPWA && !A) {
     document.getElementById('authScreen').innerHTML =
       '<div style="text-align:center;padding:40px"><p>⚠️ 无法连接到服务器</p><p style="font-size:12px;color:var(--text3)">请检查网络后重试</p><button class="btn-primary" onclick="location.reload()" style="margin-top:16px">重试</button></div>';
   }
+}
+
+// 后台校验 token：6s 超时，401 则清除会话回到登录页，网络波动则保留本地会话
+async function validateTokenBackground(base) {
+  try {
+    var mr = await fetch(base + '/auth/me', {
+      headers: { 'Authorization': 'Bearer ' + T },
+      signal: AbortSignal.timeout(6000),
+    });
+    if (mr.status === 401) {
+      T = ''; U = null; cid = null; convs = [];
+      await Store.remove('xyt');
+      await Store.remove('xyu');
+      ss('authScreen');
+      tt('登录已过期，请重新登录');
+      return;
+    }
+    if (mr.ok) {
+      var d = await mr.json();
+      U = d.data;
+      await Store.setJSON('xyu', U);
+      document.getElementById('ul').textContent = U.nickname;
+    }
+  } catch (e) { /* 网络波动：保留本地会话，下次再校验 */ }
 }
 
 document.addEventListener('DOMContentLoaded', init);

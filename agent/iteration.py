@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+import time
 import uuid
 from datetime import datetime, timezone
 
@@ -52,11 +53,23 @@ CREATE INDEX IF NOT EXISTS idx_feedback_user ON agent_feedback(user_id, created_
 """
 
 
+_iteration_tables_ready = False
+
+
 async def init_iteration_tables():
-    """初始化自我迭代表"""
+    """初始化自我迭代表（DDL 只执行一次，后续调用直接跳过）"""
+    global _iteration_tables_ready
+    if _iteration_tables_ready:
+        return
     store = await get_store()
     async with _tx(store) as db:
         await db.execute(MEMORY_TABLES_SQL)
+    _iteration_tables_ready = True
+
+
+# persona 提示词缓存：{user_id: (prompt, 生成时间戳)}，写记忆时主动失效
+_persona_cache: dict[str, tuple[str, float]] = {}
+_PERSONA_TTL = 300  # 5 分钟
 
 
 # ═══════════════════════════════════════════
@@ -67,6 +80,7 @@ async def remember(user_id: str, key: str, value: str, category: str = "general"
     """记住关于用户的一件事"""
     store = await get_store()
     now = datetime.now(timezone.utc).isoformat()
+    _persona_cache.pop(user_id, None)  # 记忆变化 → 下次重新生成 persona
 
     async with _tx(store) as db:
         # 检查是否已存在
@@ -113,6 +127,7 @@ async def recall(user_id: str, category: str | None = None) -> list[dict]:
 async def forget(user_id: str, key: str):
     """删除一条记忆"""
     store = await get_store()
+    _persona_cache.pop(user_id, None)  # 记忆变化 → 下次重新生成 persona
     async with _tx(store) as db:
         await _execute(db, "DELETE FROM agent_memory WHERE user_id=$1 AND key=$2", (user_id, key))
 
@@ -160,6 +175,12 @@ async def generate_persona_prompt(user_id: str) -> str:
     根据用户记忆和交互历史，生成个性化的系统提示词
     这是星媛自我迭代的核心
     """
+    # 缓存命中（5 分钟内）：跳过 2 次 DB 查询，缩短发消息到首字的等待
+    now = time.time()
+    cached = _persona_cache.get(user_id)
+    if cached and now - cached[1] < _PERSONA_TTL:
+        return cached[0]
+
     memories = await recall(user_id)
     feedback = await get_feedback_stats(user_id)
 
@@ -207,7 +228,9 @@ async def generate_persona_prompt(user_id: str) -> str:
 
     parts.append("你具备自我迭代能力，会根据与用户的互动不断优化自己。每次对话都是一次学习机会。")
 
-    return "\n".join(parts)
+    prompt = "\n".join(parts)
+    _persona_cache[user_id] = (prompt, now)
+    return prompt
 
 
 # ═══════════════════════════════════════════

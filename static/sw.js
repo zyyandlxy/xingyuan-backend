@@ -1,30 +1,55 @@
-// GLM Agent — PWA Service Worker
-// v2: 新增用户认证 + 静态资源版本化（升版本号强制 PWA 刷新旧缓存）
-const CACHE = 'glm-agent-v2';
-const URLS = ['/', '/manifest.json'];
+// 星媛 — PWA Service Worker
+// v3（2026-08-06）：修复旧版缓存导致的新旧版本混用、登录失效根因
+//   - 缓存版本升到 v3，activate 时清掉所有旧缓存（glm-agent-v2 等）
+//   - 静态资源：stale-while-revalidate（先返回缓存、后台更新，兼顾速度与新鲜度）
+//   - API 请求：一律网络直连、绝不缓存（/auth /health /chat /conversations /iteration）
+//   - SW 更新后自动刷新所有受控页面，让老用户立即拿到新界面
+const CACHE = 'xingyuan-shell-v3';
+const SHELL = ['/', '/manifest.json', '/js/app.js', '/css/app.css'];
 
 self.addEventListener('install', e => {
   e.waitUntil(
-    caches.open(CACHE).then(c => c.addAll(URLS))
+    caches.open(CACHE)
+      .then(c => c.addAll(SHELL))
+      .catch(() => {}) // 缺个别资源不影响安装
   );
-  self.skipWaiting();
+  self.skipWaiting(); // 立即接管，不等旧页面关闭
 });
 
 self.addEventListener('activate', e => {
   e.waitUntil(
-    caches.keys().then(keys =>
-      Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k)))
-    )
+    caches.keys()
+      .then(keys => Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k))))
+      .then(() => self.clients.claim())
+      // 强制刷新所有已打开的页面，避免继续用旧版 index.html
+      .then(() => self.clients.matchAll({ type: 'window' }))
+      .then(clients => clients.forEach(c => c.navigate(c.url)))
   );
-  self.clients.claim();
 });
 
+// API 路径一律不缓存（路径含这些片段即视为 API）
+function isApi(url) {
+  return /\/auth\/|\/health|\/chat\b|\/conversations|\/iteration|\/feedback|\/memory/.test(url.pathname);
+}
+
 self.addEventListener('fetch', e => {
-  // API 请求不缓存，直接透传
-  if (e.request.url.includes('/chat') || e.request.url.includes('/conversations')) {
-    return;
-  }
+  const req = e.request;
+  if (req.method !== 'GET') return;                 // POST/PUT/DELETE 不处理
+  const url = new URL(req.url);
+  if (url.origin !== self.location.origin) return;  // 跨域请求不处理
+  if (isApi(url)) return;                           // API 走网络
+
+  // 静态资源：stale-while-revalidate
   e.respondWith(
-    caches.match(e.request).then(cached => cached || fetch(e.request))
+    caches.open(CACHE).then(async cache => {
+      const cached = await cache.match(req, { ignoreSearch: req.mode === 'navigate' });
+      const network = fetch(req)
+        .then(res => {
+          if (res.ok && res.type === 'basic') cache.put(req, res.clone());
+          return res;
+        })
+        .catch(() => null);
+      return cached || network;
+    })
   );
 });
