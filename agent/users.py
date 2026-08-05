@@ -12,14 +12,18 @@ from datetime import datetime, timezone
 import bcrypt
 import jwt
 
-from agent.store import _execute, _fetchone, _fetchall
+from agent.store import _acquire, _execute, _fetchall, _fetchone, _tx
 
 # ═══════════════════════════════════════════
 # JWT 配置
 # ═══════════════════════════════════════════
 
 def _load_or_generate_jwt_secret() -> str:
-    """从环境变量或持久化文件加载 JWT 密钥，不存在则随机生成"""
+    """从环境变量或持久化文件加载 JWT 密钥，不存在则随机生成。
+
+    生产环境（Render）必须在环境变量配置固定的 JWT_SECRET，否则每次部署
+    会重新生成密钥，导致所有已签发的 token 失效、用户需重新登录。
+    """
     secret = os.getenv("JWT_SECRET", "")
     if secret:
         return secret
@@ -75,7 +79,7 @@ CREATE TABLE IF NOT EXISTS users (
 );
 
 CREATE TABLE IF NOT EXISTS login_history (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    id          BIGSERIAL PRIMARY KEY,
     user_id     TEXT NOT NULL,
     ip          TEXT DEFAULT '',
     device      TEXT DEFAULT '',
@@ -124,9 +128,8 @@ async def init_user_tables():
     """初始化用户相关表"""
     from agent.store import get_store
     store = await get_store()
-    db = await store._get_conn()
-    await db.executescript(USER_TABLES_SQL)
-    await db.commit()
+    async with _tx(store) as db:
+        await db.execute(USER_TABLES_SQL)
 
 
 async def register_user(username: str, password: str, nickname: str = "") -> dict:
@@ -136,7 +139,6 @@ async def register_user(username: str, password: str, nickname: str = "") -> dic
     """
     from agent.store import get_store
     store = await get_store()
-    db = await store._get_conn()
 
     # 用户名校验
     username = username.strip()
@@ -147,23 +149,24 @@ async def register_user(username: str, password: str, nickname: str = "") -> dic
     if err := validate_password_strength(password, username):
         raise ValueError(err)
 
-    # 检查用户名是否已存在
-    row = await _fetchone(db, "SELECT id FROM users WHERE username = ?", (username,))
-    if row:
-        raise ValueError("用户名已被注册")
-
     # 密码哈希
     pwd_hash = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
 
     user_id = f"u_{uuid.uuid4().hex[:16]}"
     now = datetime.now(timezone.utc).isoformat()
 
-    await db.execute(
-        "INSERT INTO users (id, username, password, nickname, created_at, last_login) "
-        "VALUES (?, ?, ?, ?, ?, ?)",
-        (user_id, username, pwd_hash, nickname or username, now, now),
-    )
-    await db.commit()
+    async with _tx(store) as db:
+        # 检查用户名是否已存在（事务内检查-写入，防并发重复注册）
+        row = await _fetchone(db, "SELECT id FROM users WHERE username = $1", (username,))
+        if row:
+            raise ValueError("用户名已被注册")
+
+        await _execute(
+            db,
+            "INSERT INTO users (id, username, password, nickname, created_at, last_login) "
+            "VALUES ($1, $2, $3, $4, $5, $6)",
+            (user_id, username, pwd_hash, nickname or username, now, now),
+        )
 
     token = create_token(user_id, username)
     return {
@@ -181,38 +184,36 @@ async def login_user(username: str, password: str, ip: str = "", device: str = "
     """
     from agent.store import get_store
     store = await get_store()
-    db = await store._get_conn()
 
-    row = await _fetchone(
-        db, "SELECT * FROM users WHERE username = ?", (username,)
-    )
-    if not row:
-        raise ValueError("用户名或密码错误")
+    async with _tx(store) as db:
+        row = await _fetchone(
+            db, "SELECT * FROM users WHERE username = $1", (username,)
+        )
+        if not row:
+            raise ValueError("用户名或密码错误")
 
-    pwd_hash = row["password"]
-    if not bcrypt.checkpw(password.encode(), pwd_hash.encode()):
-        raise ValueError("用户名或密码错误")
+        pwd_hash = row["password"]
+        if not bcrypt.checkpw(password.encode(), pwd_hash.encode()):
+            raise ValueError("用户名或密码错误")
 
-    user_id = row["id"]
-    now = datetime.now(timezone.utc).isoformat()
+        user_id = row["id"]
+        now = datetime.now(timezone.utc).isoformat()
 
-    # 更新最后登录时间
-    await db.execute("UPDATE users SET last_login = ? WHERE id = ?", (now, user_id))
+        # 更新最后登录时间
+        await _execute(db, "UPDATE users SET last_login = $1 WHERE id = $2", (now, user_id))
 
-    # 记录登录历史
-    await db.execute(
-        "INSERT INTO login_history (user_id, ip, device, login_at) VALUES (?, ?, ?, ?)",
-        (user_id, ip, device, now),
-    )
+        # 记录登录历史
+        await _execute(
+            db, "INSERT INTO login_history (user_id, ip, device, login_at) VALUES ($1, $2, $3, $4)",
+            (user_id, ip, device, now),
+        )
 
-    # 查询登录次数
-    count_row = await _fetchone(
-        db, "SELECT COUNT(*) as cnt FROM login_history WHERE user_id = ?",
-        (user_id,),
-    )
-    login_count = count_row["cnt"] if count_row else 0
-
-    await db.commit()
+        # 查询登录次数
+        count_row = await _fetchone(
+            db, "SELECT COUNT(*) as cnt FROM login_history WHERE user_id = $1",
+            (user_id,),
+        )
+        login_count = count_row["cnt"] if count_row else 0
 
     token = create_token(user_id, row["username"])
     return {
@@ -229,9 +230,9 @@ async def get_user_by_id(user_id: str) -> dict | None:
     """根据 ID 获取用户信息"""
     from agent.store import get_store
     store = await get_store()
-    db = await store._get_conn()
 
-    row = await _fetchone(db, "SELECT * FROM users WHERE id = ?", (user_id,))
+    async with _acquire(store) as db:
+        row = await _fetchone(db, "SELECT * FROM users WHERE id = $1", (user_id,))
     if not row:
         return None
     return {
@@ -248,13 +249,13 @@ async def get_login_history(user_id: str, limit: int = 20) -> list[dict]:
     """获取用户登录历史"""
     from agent.store import get_store
     store = await get_store()
-    db = await store._get_conn()
 
-    rows = await _fetchall(
-        db,
-        "SELECT * FROM login_history WHERE user_id = ? ORDER BY login_at DESC LIMIT ?",
-        (user_id, limit),
-    )
+    async with _acquire(store) as db:
+        rows = await _fetchall(
+            db,
+            "SELECT * FROM login_history WHERE user_id = $1 ORDER BY login_at DESC LIMIT $2",
+            (user_id, limit),
+        )
     return [
         {"ip": r["ip"], "device": r["device"], "login_at": r["login_at"]}
         for r in rows
@@ -265,7 +266,7 @@ async def get_total_users() -> int:
     """获取总注册用户数"""
     from agent.store import get_store
     store = await get_store()
-    db = await store._get_conn()
 
-    row = await _fetchone(db, "SELECT COUNT(*) as cnt FROM users")
+    async with _acquire(store) as db:
+        row = await _fetchone(db, "SELECT COUNT(*) as cnt FROM users")
     return row["cnt"] if row else 0

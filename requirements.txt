@@ -2,7 +2,7 @@
 fastapi>=0.115.0
 uvicorn[standard]>=0.30.0
 zhipuai>=2.0.0
-aiosqlite>=0.20.0
+asyncpg>=0.29.0
 sse-starlette>=2.1.0
 loguru>=0.7.0
 pydantic>=2.0.0

@@ -92,11 +92,7 @@ async def lifespan(app: FastAPI):
     await init_user_tables()
     await init_iteration_tables()
 
-    # WAL checkpoint — 每次启动合并 WAL 防止膨胀
-    import aiosqlite
-    async with aiosqlite.connect(settings.database_path) as wal_db:
-        await wal_db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-    logger.bind(request_id="startup").info("数据库初始化完成 (WAL checkpoint 已执行)")
+    logger.bind(request_id="startup").info("数据库初始化完成（Neon PostgreSQL）")
 
     yield
 

@@ -62,9 +62,10 @@ class Settings(BaseSettings):
     )
 
     # --- 存储 ---
-    database_path: str = Field(
-        default="data/conversations.db",
-        description="SQLite 数据库文件路径",
+    database_url: str = Field(
+        default="",
+        description="Neon PostgreSQL DSN（asyncpg 连接串），例如 "
+                    "postgresql://user:password@ep-xxx.region.aws.neon.tech/neondb?sslmode=require",
     )
 
     # --- 日志 ---

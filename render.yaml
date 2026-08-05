@@ -16,6 +16,10 @@ services:
         sync: false  # 在 Render 面板手动填入
       - key: SERVICE_API_KEY
         sync: false
+      - key: DATABASE_URL
+        sync: false  # Neon PostgreSQL 连接串（在 Render 面板手动填入，避免密钥入库）
+      - key: JWT_SECRET
+        sync: false  # 固定 JWT 签名密钥，避免每次部署 token 全部失效
       - key: LOG_LEVEL
         value: INFO
       - key: RATE_LIMIT_PER_MINUTE

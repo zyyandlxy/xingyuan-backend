@@ -9,9 +9,7 @@ import json
 import uuid
 from datetime import datetime, timezone
 
-import aiosqlite
-
-from agent.store import _fetchall, _fetchone, get_store
+from agent.store import _acquire, _execute, _fetchall, _fetchone, _tx, get_store
 
 
 # ═══════════════════════════════════════════
@@ -57,9 +55,8 @@ CREATE INDEX IF NOT EXISTS idx_feedback_user ON agent_feedback(user_id, created_
 async def init_iteration_tables():
     """初始化自我迭代表"""
     store = await get_store()
-    db = await store._get_conn()
-    await db.executescript(MEMORY_TABLES_SQL)
-    await db.commit()
+    async with _tx(store) as db:
+        await db.execute(MEMORY_TABLES_SQL)
 
 
 # ═══════════════════════════════════════════
@@ -69,45 +66,46 @@ async def init_iteration_tables():
 async def remember(user_id: str, key: str, value: str, category: str = "general", confidence: float = 0.5):
     """记住关于用户的一件事"""
     store = await get_store()
-    db = await store._get_conn()
     now = datetime.now(timezone.utc).isoformat()
 
-    # 检查是否已存在
-    existing = await _fetchone(
-        db, "SELECT id FROM agent_memory WHERE user_id = ? AND key = ?",
-        (user_id, key),
-    )
-    if existing:
-        await db.execute(
-            "UPDATE agent_memory SET value=?, confidence=?, updated_at=? WHERE id=?",
-            (value, confidence, now, existing["id"]),
+    async with _tx(store) as db:
+        # 检查是否已存在
+        existing = await _fetchone(
+            db, "SELECT id FROM agent_memory WHERE user_id = $1 AND key = $2",
+            (user_id, key),
         )
-    else:
-        await db.execute(
-            "INSERT INTO agent_memory (id, user_id, category, key, value, confidence, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (f"mem_{uuid.uuid4().hex[:12]}", user_id, category, key, value, confidence, now, now),
-        )
-    await db.commit()
+        if existing:
+            await _execute(
+                db,
+                "UPDATE agent_memory SET value=$1, confidence=$2, updated_at=$3 WHERE id=$4",
+                (value, confidence, now, existing["id"]),
+            )
+        else:
+            await _execute(
+                db,
+                "INSERT INTO agent_memory (id, user_id, category, key, value, confidence, created_at, updated_at) "
+                "VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+                (f"mem_{uuid.uuid4().hex[:12]}", user_id, category, key, value, confidence, now, now),
+            )
 
 
 async def recall(user_id: str, category: str | None = None) -> list[dict]:
     """获取关于用户的记忆"""
     store = await get_store()
-    db = await store._get_conn()
 
-    if category:
-        rows = await _fetchall(
-            db,
-            "SELECT * FROM agent_memory WHERE user_id=? AND category=? ORDER BY updated_at DESC",
-            (user_id, category),
-        )
-    else:
-        rows = await _fetchall(
-            db,
-            "SELECT * FROM agent_memory WHERE user_id=? ORDER BY updated_at DESC LIMIT 50",
-            (user_id,),
-        )
+    async with _acquire(store) as db:
+        if category:
+            rows = await _fetchall(
+                db,
+                "SELECT * FROM agent_memory WHERE user_id=$1 AND category=$2 ORDER BY updated_at DESC",
+                (user_id, category),
+            )
+        else:
+            rows = await _fetchall(
+                db,
+                "SELECT * FROM agent_memory WHERE user_id=$1 ORDER BY updated_at DESC LIMIT 50",
+                (user_id,),
+            )
     return [{"key": r["key"], "value": r["value"], "category": r["category"],
              "confidence": r["confidence"]} for r in rows]
 
@@ -115,11 +113,8 @@ async def recall(user_id: str, category: str | None = None) -> list[dict]:
 async def forget(user_id: str, key: str):
     """删除一条记忆"""
     store = await get_store()
-    db = await store._get_conn()
-    await db.execute(
-        "DELETE FROM agent_memory WHERE user_id=? AND key=?", (user_id, key)
-    )
-    await db.commit()
+    async with _tx(store) as db:
+        await _execute(db, "DELETE FROM agent_memory WHERE user_id=$1 AND key=$2", (user_id, key))
 
 
 # ═══════════════════════════════════════════
@@ -129,29 +124,30 @@ async def forget(user_id: str, key: str):
 async def save_feedback(user_id: str, rating: int, conv_id: str = "", comment: str = ""):
     """保存用户反馈（0-5星）"""
     store = await get_store()
-    db = await store._get_conn()
     now = datetime.now(timezone.utc).isoformat()
 
-    await db.execute(
-        "INSERT INTO agent_feedback (id, user_id, conv_id, rating, comment, created_at) "
-        "VALUES (?, ?, ?, ?, ?, ?)",
-        (f"fb_{uuid.uuid4().hex[:12]}", user_id, conv_id, rating, comment, now),
-    )
-    await db.commit()
+    async with _tx(store) as db:
+        await _execute(
+            db,
+            "INSERT INTO agent_feedback (id, user_id, conv_id, rating, comment, created_at) "
+            "VALUES ($1, $2, $3, $4, $5, $6)",
+            (f"fb_{uuid.uuid4().hex[:12]}", user_id, conv_id, rating, comment, now),
+        )
 
 
 async def get_feedback_stats(user_id: str) -> dict:
     """获取反馈统计"""
     store = await get_store()
-    db = await store._get_conn()
 
-    row = await _fetchone(
-        db,
-        "SELECT AVG(rating) as avg_rating, COUNT(*) as total FROM agent_feedback WHERE user_id=?",
-        (user_id,),
-    )
+    async with _acquire(store) as db:
+        row = await _fetchone(
+            db,
+            "SELECT AVG(rating) as avg_rating, COUNT(*) as total FROM agent_feedback WHERE user_id=$1",
+            (user_id,),
+        )
     if row and row["total"]:
-        return {"avg_rating": round(row["avg_rating"], 1), "total_feedback": row["total"]}
+        # asyncpg 把 AVG(integer) 解为 Decimal，转 float 再取整
+        return {"avg_rating": round(float(row["avg_rating"]), 1), "total_feedback": row["total"]}
     return {"avg_rating": 0, "total_feedback": 0}
 
 
@@ -254,21 +250,21 @@ async def learn_from_message(user_id: str, content: str):
 async def record_evolution(user_id: str, change_log: str):
     """记录一次自我进化"""
     store = await get_store()
-    db = await store._get_conn()
 
-    # 获取当前版本号
-    row = await _fetchone(
-        db,
-        "SELECT MAX(version) as max_v FROM agent_evolution WHERE user_id=?",
-        (user_id,),
-    )
-    version = (row["max_v"] or 0) + 1 if row else 1
+    async with _tx(store) as db:
+        # 获取当前版本号
+        row = await _fetchone(
+            db,
+            "SELECT MAX(version) as max_v FROM agent_evolution WHERE user_id=$1",
+            (user_id,),
+        )
+        version = (row["max_v"] or 0) + 1 if row else 1
 
-    now = datetime.now(timezone.utc).isoformat()
-    await db.execute(
-        "INSERT INTO agent_evolution (id, user_id, version, change_log, applied_at) "
-        "VALUES (?, ?, ?, ?, ?)",
-        (f"evo_{uuid.uuid4().hex[:12]}", user_id, version, change_log, now),
-    )
-    await db.commit()
+        now = datetime.now(timezone.utc).isoformat()
+        await _execute(
+            db,
+            "INSERT INTO agent_evolution (id, user_id, version, change_log, applied_at) "
+            "VALUES ($1, $2, $3, $4, $5)",
+            (f"evo_{uuid.uuid4().hex[:12]}", user_id, version, change_log, now),
+        )
     return version

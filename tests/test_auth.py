@@ -9,11 +9,13 @@ import pytest
 
 
 @pytest.fixture
-def auth_client(tmp_path, monkeypatch):
+def auth_client(monkeypatch):
     """启用服务级 API Key 认证的测试客户端"""
-    db_path = tmp_path / "auth_test.db"
+    from tests.conftest import _test_database_url
+
+    db_url = _test_database_url()
     monkeypatch.setenv("ZHIPUAI_API_KEY", "test-api-key")
-    monkeypatch.setenv("DATABASE_PATH", str(db_path))
+    monkeypatch.setenv("DATABASE_URL", db_url)
     monkeypatch.setenv("RATE_LIMIT_PER_MINUTE", "0")
     monkeypatch.setenv("SERVICE_API_KEY", "test-service-key-1234567890")
 
