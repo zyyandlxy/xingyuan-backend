@@ -112,14 +112,9 @@
 <script src="js/app.js"></script>
 <script>
 if ('serviceWorker' in navigator) {
+  // 仅注册。新版本上线不再自动刷新（避免打断对话），
+  // 由 app.js 检测到新版本后显示"发现新版本"提示条，用户点击才刷新。
   navigator.serviceWorker.register('/sw.js');
-  // SW 更新接管后强制刷新一次（sessionStorage 防循环），
-  // 保证老用户不再命中旧版缓存的 index.html
-  navigator.serviceWorker.addEventListener('controllerchange', function () {
-    if (sessionStorage.getItem('sw-v3-refreshed')) return;
-    sessionStorage.setItem('sw-v3-refreshed', '1');
-    location.reload();
-  });
 }
 </script>
 </body>

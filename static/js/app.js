@@ -557,6 +557,9 @@ async function init() {
     }
   }
 
+  // ── 1.5 新版本检测（不阻塞，后台探测）──
+  checkUpdate();
+
   // ── 2. 恢复会话 ──
   //    有本地 token：立即进聊天（不阻塞等待网络），后台再校验 token 有效性
   if (hasSavedToken) {
@@ -597,5 +600,78 @@ async function validateTokenBackground(base) {
     }
   } catch (e) { /* 网络波动：保留本地会话，下次再校验 */ }
 }
+
+// ═══════════════════════════════════════════
+// 新版本更新提示
+// 部署新版本后，用户打开 App 显示"发现新版本"提示条，点击才刷新，不打断对话。
+// ⚠ 发版时必须同步递增三处版本号：
+//   main.py create_app(version=...) 、static/routers/health.py 返回的 version 、下方 APP_VERSION
+// ═══════════════════════════════════════════
+const APP_VERSION = '2.7.0';
+
+var _dismissedVer = '';
+try { _dismissedVer = localStorage.getItem('xy_uver') || ''; } catch (e) { /* 隐私模式等 */ }
+
+async function _fetchHealthVersion(base) {
+  try {
+    var r = await fetch(base + '/health', { signal: AbortSignal.timeout(CONFIG.healthTimeout) });
+    var d = await r.json();
+    return (d && d.version) ? String(d.version) : '';
+  } catch (e) { return ''; }
+}
+
+async function checkUpdate() {
+  if (document.visibilityState === 'hidden') return;
+  var ver = await _fetchHealthVersion(A);
+  if (!ver || ver === APP_VERSION) return;
+  if (_dismissedVer === ver) return;          // 用户已忽略该版本
+  if (document.getElementById('uv')) return;  // 已在显示
+  showUpdateBanner(ver);
+}
+
+function showUpdateBanner(ver) {
+  var b = document.createElement('div');
+  b.id = 'uv';
+  b.setAttribute('data-ver', ver);
+  b.style.cssText = [
+    'position:fixed', 'top:0', 'left:0', 'right:0', 'z-index:9999',
+    'display:flex', 'align-items:center', 'justify-content:center',
+    'gap:10px', 'padding:9px 46px',
+    'background:linear-gradient(90deg,#6d5dfc,#9a5dfc)',
+    'color:#fff', 'font-size:13px', 'line-height:1.5',
+    'box-shadow:0 2px 12px rgba(0,0,0,.25)',
+  ].join(';');
+  b.innerHTML =
+    '<span style="display:flex;align-items:center;gap:6px">' + I.star +
+    '发现新版本 v' + esc(ver) + '</span>' +
+    '<button onclick="forceRefresh()" style="background:#fff;color:#6d5dfc;border:none;border-radius:14px;padding:4px 14px;font-size:12px;font-weight:600;cursor:pointer">点击更新</button>' +
+    '<button onclick="dismissUpdate()" title="忽略" style="position:absolute;right:6px;top:50%;transform:translateY(-50%);background:none;border:none;color:#fff;cursor:pointer;padding:6px;display:flex">' + I.close + '</button>';
+  document.body.appendChild(b);
+}
+
+function dismissUpdate() {
+  var el = document.getElementById('uv');
+  if (el) el.remove();
+  var ver = el ? el.getAttribute('data-ver') : '';
+  if (ver) {
+    _dismissedVer = ver;
+    try { localStorage.setItem('xy_uver', ver); } catch (e) {}
+  }
+}
+
+async function forceRefresh() {
+  // 先清 SW 旧缓存，保证刷新后拿到最新资源
+  try {
+    var keys = await caches.keys();
+    await Promise.all(keys.map(function (k) { return caches.delete(k); }));
+  } catch (e) { /* 无缓存或失败，直接刷新 */ }
+  location.reload();
+}
+
+// 触发时机：初始化寻址完成后、切回前台、以及每 5 分钟
+document.addEventListener('visibilitychange', function () {
+  if (document.visibilityState === 'visible') checkUpdate();
+});
+setInterval(checkUpdate, 5 * 60 * 1000);
 
 document.addEventListener('DOMContentLoaded', init);
