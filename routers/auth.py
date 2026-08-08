@@ -41,6 +41,7 @@ class LoginRequest(BaseModel):
 class ProfileUpdate(BaseModel):
     nickname: str | None = Field(default=None, max_length=30, description="昵称")
     avatar: str | None = Field(default=None, max_length=300000, description="头像 dataURL")
+    agent_avatar: str | None = Field(default=None, max_length=300000, description="智能体头像 dataURL")
 
 
 class PasswordChange(BaseModel):
@@ -150,11 +151,11 @@ def _require_user_id(authorization: str) -> str:
     return payload["sub"]
 
 
-@router.put("/me", summary="更新资料（昵称 / 头像）")
+@router.put("/me", summary="更新资料（昵称 / 头像 / 智能体头像）")
 async def update_me(body: ProfileUpdate, authorization: str = Header(default="")):
-    """更新当前用户的昵称或头像"""
+    """更新当前用户的昵称、头像或智能体头像"""
     user_id = _require_user_id(authorization)
-    user = await update_profile(user_id, body.nickname, body.avatar)
+    user = await update_profile(user_id, body.nickname, body.avatar, body.agent_avatar)
     if not user:
         raise HTTPException(status_code=404, detail="用户不存在")
     return {"success": True, "message": "资料已更新", "data": user}

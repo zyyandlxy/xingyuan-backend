@@ -4,7 +4,7 @@
 //   - 静态资源：stale-while-revalidate（先返回缓存、后台更新，兼顾速度与新鲜度）
 //   - API 请求：一律网络直连、绝不缓存（/auth /health /chat /conversations /iteration）
 //   - SW 更新后自动刷新所有受控页面，让老用户立即拿到新界面
-const CACHE = 'xingyuan-shell-v8';
+const CACHE = 'xingyuan-shell-v9';
 const SHELL = ['/', '/manifest.json', '/js/app.js', '/css/app.css'];
 
 self.addEventListener('install', e => {

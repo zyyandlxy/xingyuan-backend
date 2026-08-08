@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+import re
 import uuid
 from collections.abc import AsyncGenerator
 from typing import Any
@@ -23,6 +24,37 @@ from agent.models import (
     Tool,
 )
 from agent.vision import strip_image_markers
+
+
+# ═══════════════════════════════════════════
+# 无符号输出（用户需求：回复不带任何符号，只保留标点）
+# 双保险：① system 提示词约束（OUTPUT_RULE）② 后端 sanitize_reply 兜底
+# ═══════════════════════════════════════════
+
+OUTPUT_RULE = (
+    "回复规则：请不要使用任何 emoji 表情、Markdown 标记（如 # * - > _ 等）、"
+    "以及任何特殊装饰符号或图形字符。回复内容只使用文字、数字与标点符号，保持简洁自然。"
+)
+
+# 保留：汉字、CJK 标点、全角标点、破折号/省略号/弯引号、英文字母数字、英文标点、空白
+# 其余一律删除（emoji、Markdown 标记、装饰字符、数学符号、箭头等）
+_NO_SYMBOL_RE = re.compile(
+    r"[^一-鿿"          # CJK 统一汉字
+    r"　-〿"           # CJK 标点
+    r"＀-￯"           # 全角标点
+    r"–—‘’“”…"  # – — ‘ ’ “ ” …
+    r"A-Za-z0-9"
+    r"\s"
+    r".,!?;:'\"()"
+    r"]"
+)
+
+
+def sanitize_reply(text: str) -> str:
+    """去掉回复中除标点外的所有符号（emoji / Markdown 标记 / 装饰字符），保留文字、数字、标点与空白。"""
+    if not text:
+        return text
+    return _NO_SYMBOL_RE.sub("", text)
 
 
 # ═══════════════════════════════════════════
@@ -202,6 +234,9 @@ async def chat(
             )
             tool_calls = []
 
+        # 无符号输出兜底：去掉 emoji / Markdown 标记 / 装饰字符（仅保留文字数字标点）
+        content = sanitize_reply(content)
+
         # 持久化 AI 回复
         if store_messages_cb and content:
             await store_messages_cb(
@@ -253,7 +288,8 @@ async def chat_stream(
         accumulated = ""
         for chunk in response:
             delta = chunk.choices[0].delta
-            content = delta.content or ""
+            # 无符号输出兜底：逐 chunk 清洗，前端实时显示与最终持久化均为干净内容
+            content = sanitize_reply(delta.content or "")
 
             if content:
                 accumulated += content
@@ -312,9 +348,11 @@ def _build_messages(request: ChatRequest) -> list[dict[str, Any]]:
     """构建发送给 GLM 的消息列表"""
     messages: list[dict[str, Any]] = []
 
-    # 系统提示词优先
+    # 无符号输出规则始终注入（覆盖 guest / 无 persona 等所有路径），persona 跟在规则之后
+    sys_parts = [OUTPUT_RULE]
     if request.system_prompt:
-        messages.append({"role": "system", "content": request.system_prompt})
+        sys_parts.append(request.system_prompt)
+    messages.append({"role": "system", "content": "\n".join(sys_parts)})
 
     for msg in request.messages:
         # 防御：剥离历史消息里可能残留的 [图片]...[/图片] 标记，杜绝 base64 进 LLM 上下文

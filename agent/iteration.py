@@ -202,6 +202,8 @@ async def generate_persona_prompt(user_id: str) -> str:
     base = (
         "你是星媛，用户的专属 AI 智能助手。你温柔、专业、可靠、善解人意。"
         "请用中文回答，保持回复简洁且有帮助。"
+        "回复时请不要使用任何 emoji 表情、Markdown 标记或特殊装饰符号，"
+        "只使用文字、数字与标点符号。"
     )
 
     # 根据记忆添加个性适配

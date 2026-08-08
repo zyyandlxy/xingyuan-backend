@@ -75,6 +75,7 @@ CREATE TABLE IF NOT EXISTS users (
     password    TEXT NOT NULL,
     nickname    TEXT DEFAULT '',
     avatar      TEXT DEFAULT '',
+    agent_avatar TEXT DEFAULT '',
     created_at  TEXT NOT NULL,
     last_login  TEXT
 );
@@ -137,6 +138,11 @@ async def init_user_tables():
     store = await get_store()
     async with _tx(store) as db:
         await db.execute(USER_TABLES_SQL)
+        # 兼容已存在的生产表：CREATE TABLE IF NOT EXISTS 不会给已有表加列，
+        # 为老库补 agent_avatar 列（幂等，无副作用）
+        await db.execute(
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS agent_avatar TEXT DEFAULT ''"
+        )
     _user_tables_ready = True
 
 
@@ -182,6 +188,7 @@ async def register_user(username: str, password: str, nickname: str = "") -> dic
         "username": username,
         "nickname": nickname or username,
         "avatar": "",
+        "agent_avatar": "",
         "token": token,
     }
 
@@ -230,6 +237,7 @@ async def login_user(username: str, password: str, ip: str = "", device: str = "
         "username": row["username"],
         "nickname": row["nickname"] or row["username"],
         "avatar": row["avatar"],
+        "agent_avatar": row.get("agent_avatar", ""),
         "token": token,
         "login_count": login_count,
         "last_login": now,
@@ -250,6 +258,7 @@ async def get_user_by_id(user_id: str) -> dict | None:
         "username": row["username"],
         "nickname": row["nickname"],
         "avatar": row["avatar"],
+        "agent_avatar": row.get("agent_avatar", ""),
         "created_at": row["created_at"],
         "last_login": row["last_login"],
     }
@@ -259,27 +268,39 @@ async def update_profile(
     user_id: str,
     nickname: str | None = None,
     avatar: str | None = None,
+    agent_avatar: str | None = None,
 ) -> dict | None:
-    """更新用户资料（昵称 / 头像），返回更新后的用户信息；用户不存在返回 None"""
+    """更新用户资料（昵称 / 头像 / 智能体头像），返回更新后的用户信息；用户不存在返回 None"""
     from agent.store import get_store
     store = await get_store()
 
     if nickname is not None:
         nickname = nickname.strip()[:30]
 
+    # 动态拼接 SET（仅含非 None 字段），列名与占位符均固定，值走参数绑定
+    sets: list[str] = []
+    params: list = []
+    if nickname is not None:
+        sets.append(f"nickname=${len(params) + 1}")
+        params.append(nickname)
+    if avatar is not None:
+        sets.append(f"avatar=${len(params) + 1}")
+        params.append(avatar)
+    if agent_avatar is not None:
+        sets.append(f"agent_avatar=${len(params) + 1}")
+        params.append(agent_avatar)
+
     async with _tx(store) as db:
         row = await _fetchone(db, "SELECT id FROM users WHERE id = $1", (user_id,))
         if not row:
             return None
-        if nickname is not None and avatar is not None:
+        if sets:
+            params.append(user_id)
             await _execute(
-                db, "UPDATE users SET nickname=$1, avatar=$2 WHERE id=$3",
-                (nickname, avatar, user_id),
+                db,
+                f"UPDATE users SET {', '.join(sets)} WHERE id=${len(params)}",
+                tuple(params),
             )
-        elif nickname is not None:
-            await _execute(db, "UPDATE users SET nickname=$1 WHERE id=$2", (nickname, user_id))
-        elif avatar is not None:
-            await _execute(db, "UPDATE users SET avatar=$1 WHERE id=$2", (avatar, user_id))
     return await get_user_by_id(user_id)
 
 

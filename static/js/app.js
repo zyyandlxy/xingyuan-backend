@@ -187,7 +187,7 @@ async function doLogin(e) {
     const d = await r.json();
     if (!r.ok) throw new Error(d.detail || '失败');
     T = d.data.token;
-    U = { id: d.data.id, username: d.data.username, nickname: d.data.nickname, avatar: d.data.avatar || '' };
+    U = { id: d.data.id, username: d.data.username, nickname: d.data.nickname, avatar: d.data.avatar || '', agent_avatar: d.data.agent_avatar || '' };
     await Store.set('xyt', T);
     await Store.setJSON('xyu', U);
     tt('欢迎回来，' + U.nickname + ' ✨');
@@ -220,7 +220,7 @@ async function doReg(e) {
     const d = await r.json();
     if (!r.ok) throw new Error(d.detail || '失败');
     T = d.data.token;
-    U = { id: d.data.id, username: d.data.username, nickname: d.data.nickname, avatar: d.data.avatar || '' };
+    U = { id: d.data.id, username: d.data.username, nickname: d.data.nickname, avatar: d.data.avatar || '', agent_avatar: d.data.agent_avatar || '' };
     await Store.set('xyt', T);
     await Store.setJSON('xyu', U);
     tt('注册成功！' + U.nickname + ' 🎉');
@@ -245,11 +245,13 @@ function ab(r, c, retryCb) {
   const el = document.createElement('div');
   el.className = 'msg-row ' + r;
   const icon = r === 'user' ? I.user : r === 'assistant' ? I.star : '';
-  // 用户已设置头像时，用头像图片替代默认图标
+  // 用户已设置头像时用图片替代默认图标；智能体头像同理（assistant 优先用用户设置的头像）
   const avHtml = r === 'system' ? '' :
     (r === 'user' && U && U.avatar)
       ? '<div class="msg-av"><img class="av-img" src="' + U.avatar + '" alt=""/></div>'
-      : '<div class="msg-av">' + icon + '</div>';
+      : (r === 'assistant' && U && U.agent_avatar)
+        ? '<div class="msg-av"><img class="av-img" src="' + U.agent_avatar + '" alt=""/></div>'
+        : '<div class="msg-av">' + icon + '</div>';
   let h = avHtml + '<div class="msg-b"></div>';
   if (retryCb && r === 'system') {
     h += '<div class="msg-actions"><button class="retry-btn">🔄 重试</button></div>';
@@ -268,7 +270,8 @@ function at() {
   const el = document.createElement('div');
   el.className = 'msg-row assistant msg-typing';
   el.id = 'ty';
-  el.innerHTML = '<div class="msg-av">' + I.star + '</div><div class="msg-b"><div class="dots"><span></span><span></span><span></span></div></div>';
+  const aav = (U && U.agent_avatar) ? '<img class="av-img" src="' + U.agent_avatar + '" alt=""/>' : I.star;
+  el.innerHTML = '<div class="msg-av">' + aav + '</div><div class="msg-b"><div class="dots"><span></span><span></span><span></span></div></div>';
   document.getElementById('ml').appendChild(el);
   sd();
 }
@@ -747,7 +750,8 @@ function closeWp() {
 // ═══════════════════════════════════════════
 // 个人资料 — 昵称 / 头像 / 密码设置
 // ═══════════════════════════════════════════
-var _pfAvatar = '';   // 本次会话尚未保存的新头像 dataURL
+var _pfAvatar = '';        // 本次会话尚未保存的新头像 dataURL
+var _pfAgentAvatar = '';   // 本次会话尚未保存的新智能体头像 dataURL
 
 function showProfile() {
   closeSb();
@@ -760,8 +764,12 @@ function showProfile() {
   box.className = 'wp-box';
   box.innerHTML =
     '<div class="wp-title">个人资料</div>' +
+    '<label class="pf-label">我的头像</label>' +
     '<div class="pf-av" onclick="pickAvatar()" title="点击更换头像">' + avatarPreviewHtml() +
     '<span class="pf-av-tip">点击更换头像</span></div>' +
+    '<label class="pf-label">智能体头像</label>' +
+    '<div class="pf-av" onclick="pickAgentAvatar()" title="设置对话框里星媛的头像">' + agentAvatarPreviewHtml() +
+    '<span class="pf-av-tip">点击设置</span></div>' +
     '<label class="pf-label">昵称</label>' +
     '<input class="pf-input" id="pfNick" maxlength="30" placeholder="给自己取个名字"/>' +
     '<div style="display:flex;gap:10px;margin-top:12px">' +
@@ -788,6 +796,13 @@ function avatarPreviewHtml() {
     : I.user;
 }
 
+function agentAvatarPreviewHtml() {
+  var aav = U && U.agent_avatar ? U.agent_avatar : '';
+  return aav
+    ? '<img class="pf-av-img" src="' + aav + '" alt="智能体头像"/>'
+    : I.star;
+}
+
 function pickAvatar() {
   var inp = document.getElementById('pfFile');
   if (!inp) {
@@ -797,6 +812,20 @@ function pickAvatar() {
     inp.accept = 'image/*';
     inp.style.display = 'none';
     inp.addEventListener('change', function () { if (inp.files && inp.files[0]) onAvatarFile(inp.files[0]); });
+    document.body.appendChild(inp);
+  }
+  inp.click();
+}
+
+function pickAgentAvatar() {
+  var inp = document.getElementById('pfFileAgent');
+  if (!inp) {
+    inp = document.createElement('input');
+    inp.id = 'pfFileAgent';
+    inp.type = 'file';
+    inp.accept = 'image/*';
+    inp.style.display = 'none';
+    inp.addEventListener('change', function () { if (inp.files && inp.files[0]) onAgentAvatarFile(inp.files[0]); });
     document.body.appendChild(inp);
   }
   inp.click();
@@ -817,6 +846,21 @@ async function onAvatarFile(file) {
   } catch (e) { tt('图片处理失败，请换一张'); }
 }
 
+async function onAgentAvatarFile(file) {
+  if (file.size > 12 * 1024 * 1024) { tt('图片太大，请小于 12MB'); return; }
+  try {
+    var img = await loadImage(file);
+    var dataUrl = compressAvatar(img);
+    var avs = document.getElementById('pfm').querySelectorAll('.pf-av');
+    if (avs.length > 1) {
+      avs[1].innerHTML = '<img class="pf-av-img" src="' + dataUrl + '" alt="智能体头像"/>' +
+        '<span class="pf-av-tip">点击设置</span>';
+    }
+    _pfAgentAvatar = dataUrl;
+    tt('智能体头像已选择，点"保存资料"生效');
+  } catch (e) { tt('图片处理失败，请换一张'); }
+}
+
 function compressAvatar(img) {
   var size = 128;
   var s = Math.min(img.width, img.height);
@@ -831,6 +875,7 @@ async function saveProfile() {
   if (!nick) { tt('昵称不能为空'); return; }
   var body = { nickname: nick };
   if (_pfAvatar) body.avatar = _pfAvatar;
+  if (_pfAgentAvatar) body.agent_avatar = _pfAgentAvatar;
   try {
     var r = await fetch(A + '/auth/me', {
       method: 'PUT',
@@ -841,9 +886,11 @@ async function saveProfile() {
     if (!r.ok) throw new Error(d.detail || '保存失败');
     U.nickname = d.data.nickname;
     U.avatar = d.data.avatar;
+    U.agent_avatar = d.data.agent_avatar;
     await Store.setJSON('xyu', U);
     document.getElementById('ul').textContent = U.nickname;
     _pfAvatar = '';
+    _pfAgentAvatar = '';
     tt('资料已保存 ✨');
     closeProfile();
   } catch (e) { tt('❌ ' + e.message); }
@@ -877,6 +924,7 @@ function closeProfile() {
   const ov = document.getElementById('pfm');
   if (ov) ov.remove();
   _pfAvatar = '';
+  _pfAgentAvatar = '';
 }
 
 // ═══════════════════════════════════════════
@@ -995,7 +1043,7 @@ async function validateTokenBackground(base) {
 // 前端仅保留 APP_VERSION 用于比对；后端升级后所有公网部署用户都能实时拉取到新提示。
 // ⚠ 发版时只需同步两处版本号：agent/version.py 与下方 APP_VERSION。
 // ═══════════════════════════════════════════
-const APP_VERSION = '3.0.0';
+const APP_VERSION = '3.1.0';
 
 // 新版本亮点文案由后端 /health 下发（agent/version.py），前端不再硬编码——
 // 后端升级后所有公网部署的用户都能实时拉取到最新提示内容
