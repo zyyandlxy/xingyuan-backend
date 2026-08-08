@@ -1,10 +1,10 @@
 // 星媛 — PWA Service Worker
-// v5（2026-08-08）：新增"新版本亮点"提示条（app.js 变更），缓存版本升到 v5
-//   - activate 时清掉所有旧缓存（glm-agent-v2 / xingyuan-shell-v4 等）
+// v6（2026-08-08）：更新提示改为后端数据驱动（app.js 变更，版本号/文案唯一来源 agent/version.py），缓存版本升到 v6
+//   - activate 时清掉所有旧缓存（glm-agent-v2 / xingyuan-shell-v5 等）
 //   - 静态资源：stale-while-revalidate（先返回缓存、后台更新，兼顾速度与新鲜度）
 //   - API 请求：一律网络直连、绝不缓存（/auth /health /chat /conversations /iteration）
 //   - SW 更新后自动刷新所有受控页面，让老用户立即拿到新界面
-const CACHE = 'xingyuan-shell-v5';
+const CACHE = 'xingyuan-shell-v6';
 const SHELL = ['/', '/manifest.json', '/js/app.js', '/css/app.css'];
 
 self.addEventListener('install', e => {

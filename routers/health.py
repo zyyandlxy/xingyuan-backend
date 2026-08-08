@@ -8,6 +8,7 @@ from fastapi import APIRouter
 
 from agent.config import get_settings
 from agent.store import get_store
+from agent.version import APP_VERSION, VERSION_NOTES
 
 router = APIRouter()
 
@@ -18,7 +19,8 @@ async def health():
     settings = get_settings()
     return {
         "status": "ok",
-        "version": "2.8.0",
+        "version": APP_VERSION,
+        "version_notes": VERSION_NOTES.get(APP_VERSION, ""),
         "auth_enabled": settings.is_auth_enabled,
     }
 

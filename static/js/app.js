@@ -890,8 +890,7 @@ function enterChat() {
 }
 
 async function init() {
-  // ── 0.5 新版本亮点提示（不依赖网络，首次进入本版本弹一次）──
-  showVersionNoticeIfNew();
+  // ── 0.5 新版本亮点提示改由后端驱动：见下方 checkUpdate()（拉 /health 的 version_notes）──
 
   // ── 0. 立即检查是否有已保存 token ──
   T = await Store.get('xyt');
@@ -986,18 +985,16 @@ async function validateTokenBackground(base) {
 }
 
 // ═══════════════════════════════════════════
-// 新版本更新提示
+// 新版本更新提示（后端数据驱动）
 // 部署新版本后，用户打开 App 显示"发现新版本"提示条，点击才刷新，不打断对话。
-// ⚠ 发版时必须同步递增三处版本号：
-//   main.py create_app(version=...) 、static/routers/health.py 返回的 version 、下方 APP_VERSION
-//   并在 VERSION_NOTES 里为"新版本亮点"提示增加一条说明（key = 新版本号）。
+// 版本号与亮点文案的唯一来源是后端 agent/version.py（/health 下发 version + version_notes），
+// 前端仅保留 APP_VERSION 用于比对；后端升级后所有公网部署用户都能实时拉取到新提示。
+// ⚠ 发版时只需同步两处版本号：agent/version.py 与下方 APP_VERSION。
 // ═══════════════════════════════════════════
 const APP_VERSION = '2.8.0';
 
-// 新版本亮点说明：用户首次进入某一版时顶部弹一次（xy_vernote_seen 记录已看过）
-const VERSION_NOTES = {
-  '2.8.0': '新增「聊天图片识别」：点输入框旁的附件按钮，拍照或从相册发送图片，星媛能看懂并回复你。另有个人资料设置、修改密码、聊天壁纸与全新彩色星 Logo。',
-};
+// 新版本亮点文案由后端 /health 下发（agent/version.py），前端不再硬编码——
+// 后端升级后所有公网部署的用户都能实时拉取到最新提示内容
 
 var _seenVer = '';
 try { _seenVer = localStorage.getItem('xy_vernote_seen') || ''; } catch (e) { /* 隐私模式等 */ }
@@ -1005,21 +1002,31 @@ try { _seenVer = localStorage.getItem('xy_vernote_seen') || ''; } catch (e) { /*
 var _dismissedVer = '';
 try { _dismissedVer = localStorage.getItem('xy_uver') || ''; } catch (e) { /* 隐私模式等 */ }
 
-async function _fetchHealthVersion(base) {
+async function _fetchHealthInfo(base) {
   try {
     var r = await fetch(base + '/health', { signal: AbortSignal.timeout(CONFIG.healthTimeout) });
     var d = await r.json();
-    return (d && d.version) ? String(d.version) : '';
-  } catch (e) { return ''; }
+    return {
+      version: (d && d.version) ? String(d.version) : '',
+      notes: (d && d.version_notes) ? String(d.version_notes) : '',
+    };
+  } catch (e) { return { version: '', notes: '' }; }
 }
 
 async function checkUpdate() {
   if (document.visibilityState === 'hidden') return;
-  var ver = await _fetchHealthVersion(A);
-  if (!ver || ver === APP_VERSION) return;
-  if (_dismissedVer === ver) return;          // 用户已忽略该版本
-  if (document.getElementById('uv')) return;  // 已在显示
-  showUpdateBanner(ver);
+  var info = await _fetchHealthInfo(A);
+  var ver = info.version;
+  if (!ver) return;
+  if (ver !== APP_VERSION) {
+    // 后端已出新版本 → 弹"发现新版本"更新条（所有用户无论前端新旧都能收到）
+    if (_dismissedVer === ver) return;          // 用户已忽略该版本
+    if (document.getElementById('uv')) return;  // 已在显示
+    showUpdateBanner(ver);
+  } else {
+    // 已是后端最新版 → 弹后端下发的"新版本亮点"（一次性）
+    showVersionNoticeIfNew(ver, info.notes);
+  }
 }
 
 function showUpdateBanner(ver) {
@@ -1052,12 +1059,12 @@ function dismissUpdate() {
   }
 }
 
-// "新版本亮点"一次性提示：首次进入某版本弹一次功能说明（不依赖网络），点"开始体验"关闭
-function showVersionNoticeIfNew() {
-  if (_seenVer === APP_VERSION) return;
-  var note = VERSION_NOTES[APP_VERSION];
-  if (!note) return;  // 本版本没有说明文案，不打扰
-  try { localStorage.setItem('xy_vernote_seen', APP_VERSION); } catch (e) {}
+// "新版本亮点"一次性提示：文案由后端 /health 下发（ver+notes），
+// 已是最新版的用户首次进入弹一次，点"开始体验"关闭
+function showVersionNoticeIfNew(ver, note) {
+  if (!ver || _seenVer === ver) return;   // 已看过该版本亮点
+  if (!note) return;                      // 后端未下发文案，不打扰
+  try { localStorage.setItem('xy_vernote_seen', ver); } catch (e) {}
   var b = document.createElement('div');
   b.id = 'uvn';
   b.style.cssText = [
@@ -1070,7 +1077,7 @@ function showVersionNoticeIfNew() {
   ].join(';');
   b.innerHTML =
     '<span style="display:flex;align-items:center;gap:6px;font-weight:600">' + I.star +
-    '欢迎来到 v' + esc(APP_VERSION) + '</span>' +
+    '欢迎来到 v' + esc(ver) + '</span>' +
     '<span style="font-size:12px;opacity:.96;text-align:center;max-width:560px">' + esc(note) + '</span>' +
     '<button onclick="dismissVersionNotice()" style="background:#fff;color:#6d5dfc;border:none;border-radius:14px;padding:6px 22px;font-size:12px;font-weight:600;cursor:pointer;margin-top:2px">开始体验</button>' +
     '<button onclick="dismissVersionNotice()" title="忽略" style="position:absolute;right:6px;top:50%;transform:translateY(-50%);background:none;border:none;color:#fff;cursor:pointer;padding:6px;display:flex">' + I.close + '</button>';
