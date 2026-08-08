@@ -162,6 +162,19 @@ def create_app() -> FastAPI:
     if static_dir.exists():
         app.mount("/", StaticFiles(directory=str(static_dir), html=True), name="static")
 
+    # ── PWA 更新传播：sw.js / index.html 不缓存 ───────────────
+    # 无 Cache-Control 时浏览器对 sw.js 采用启发式缓存（最长约 24h），
+    # 用户不会及时重新检查 sw.js → 拿不到新 shell。这里强制 no-cache，
+    # 让每次导航都重新校验 sw.js，SW 版本变化后立即安装激活并刷新页面。
+    @app.middleware("http")
+    async def pwa_no_cache(request: Request, call_next):
+        path = request.url.path
+        if path in ("/sw.js", "/", "/index.html", "/manifest.json"):
+            response = await call_next(request)
+            response.headers["Cache-Control"] = "no-cache"
+            return response
+        return await call_next(request)
+
     # ── 全局异常处理 ────────────────────────
     @app.exception_handler(AppException)
     async def handle_app_exception(request: Request, exc: AppException):

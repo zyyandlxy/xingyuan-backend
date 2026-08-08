@@ -1065,11 +1065,23 @@ async function _fetchHealthInfo(base) {
   } catch (e) { return { version: '', notes: '' }; }
 }
 
+var _healthRetryTimer = null;
+
 async function checkUpdate() {
   if (document.visibilityState === 'hidden') return;
   var info = await _fetchHealthInfo(A);
   var ver = info.version;
-  if (!ver) return;
+  if (!ver) {
+    // /health 拉取失败（网络抖动/连接重置）：短延迟自动重试一次，避免错过更新提示；
+    // 若仍失败交给 5 分钟轮询与切回前台兜底（_healthRetryTimer 防抖，不无限重试）
+    if (_healthRetryTimer === null) {
+      _healthRetryTimer = setTimeout(function () {
+        _healthRetryTimer = null;
+        checkUpdate();
+      }, 15 * 1000);
+    }
+    return;
+  }
   if (ver !== APP_VERSION) {
     // 后端已出新版本 → 弹"发现新版本"更新条（所有用户无论前端新旧都能收到）
     if (_dismissedVer === ver) return;          // 用户已忽略该版本

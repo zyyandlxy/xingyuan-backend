@@ -1,10 +1,11 @@
 // 星媛 — PWA Service Worker
-// v8（2026-08-08）：3.0.0 App 远程加载模式，app.js 变更，缓存版本升到 v8
-//   - activate 时清掉所有旧缓存（glm-agent-v2 / xingyuan-shell-v7 等）
+// v10（2026-08-08）：app.js 更新（/health 拉取失败自动重试），缓存版本升到 v10
+//   - activate 时清掉所有旧缓存（glm-agent-v2 / xingyuan-shell-v8 / v9 等）
 //   - 静态资源：stale-while-revalidate（先返回缓存、后台更新，兼顾速度与新鲜度）
 //   - API 请求：一律网络直连、绝不缓存（/auth /health /chat /conversations /iteration）
 //   - SW 更新后自动刷新所有受控页面，让老用户立即拿到新界面
-const CACHE = 'xingyuan-shell-v9';
+//   - 后端 main.py 已给 /sw.js 响应加 Cache-Control: no-cache，保证浏览器每次导航重新检查
+const CACHE = 'xingyuan-shell-v10';
 const SHELL = ['/', '/manifest.json', '/js/app.js', '/css/app.css'];
 
 self.addEventListener('install', e => {
