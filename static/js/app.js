@@ -890,6 +890,9 @@ function enterChat() {
 }
 
 async function init() {
+  // ── 0.5 新版本亮点提示（不依赖网络，首次进入本版本弹一次）──
+  showVersionNoticeIfNew();
+
   // ── 0. 立即检查是否有已保存 token ──
   T = await Store.get('xyt');
   U = await Store.getJSON('xyu');
@@ -987,8 +990,17 @@ async function validateTokenBackground(base) {
 // 部署新版本后，用户打开 App 显示"发现新版本"提示条，点击才刷新，不打断对话。
 // ⚠ 发版时必须同步递增三处版本号：
 //   main.py create_app(version=...) 、static/routers/health.py 返回的 version 、下方 APP_VERSION
+//   并在 VERSION_NOTES 里为"新版本亮点"提示增加一条说明（key = 新版本号）。
 // ═══════════════════════════════════════════
 const APP_VERSION = '2.8.0';
+
+// 新版本亮点说明：用户首次进入某一版时顶部弹一次（xy_vernote_seen 记录已看过）
+const VERSION_NOTES = {
+  '2.8.0': '新增「聊天图片识别」：点输入框旁的附件按钮，拍照或从相册发送图片，星媛能看懂并回复你。另有个人资料设置、修改密码、聊天壁纸与全新彩色星 Logo。',
+};
+
+var _seenVer = '';
+try { _seenVer = localStorage.getItem('xy_vernote_seen') || ''; } catch (e) { /* 隐私模式等 */ }
 
 var _dismissedVer = '';
 try { _dismissedVer = localStorage.getItem('xy_uver') || ''; } catch (e) { /* 隐私模式等 */ }
@@ -1038,6 +1050,36 @@ function dismissUpdate() {
     _dismissedVer = ver;
     try { localStorage.setItem('xy_uver', ver); } catch (e) {}
   }
+}
+
+// "新版本亮点"一次性提示：首次进入某版本弹一次功能说明（不依赖网络），点"开始体验"关闭
+function showVersionNoticeIfNew() {
+  if (_seenVer === APP_VERSION) return;
+  var note = VERSION_NOTES[APP_VERSION];
+  if (!note) return;  // 本版本没有说明文案，不打扰
+  try { localStorage.setItem('xy_vernote_seen', APP_VERSION); } catch (e) {}
+  var b = document.createElement('div');
+  b.id = 'uvn';
+  b.style.cssText = [
+    'position:fixed', 'top:0', 'left:0', 'right:0', 'z-index:9998',
+    'display:flex', 'flex-direction:column', 'align-items:center', 'justify-content:center',
+    'gap:5px', 'padding:12px 46px',
+    'background:linear-gradient(90deg,#6d5dfc,#9a5dfc)',
+    'color:#fff', 'font-size:13px', 'line-height:1.55',
+    'box-shadow:0 2px 12px rgba(0,0,0,.25)',
+  ].join(';');
+  b.innerHTML =
+    '<span style="display:flex;align-items:center;gap:6px;font-weight:600">' + I.star +
+    '欢迎来到 v' + esc(APP_VERSION) + '</span>' +
+    '<span style="font-size:12px;opacity:.96;text-align:center;max-width:560px">' + esc(note) + '</span>' +
+    '<button onclick="dismissVersionNotice()" style="background:#fff;color:#6d5dfc;border:none;border-radius:14px;padding:6px 22px;font-size:12px;font-weight:600;cursor:pointer;margin-top:2px">开始体验</button>' +
+    '<button onclick="dismissVersionNotice()" title="忽略" style="position:absolute;right:6px;top:50%;transform:translateY(-50%);background:none;border:none;color:#fff;cursor:pointer;padding:6px;display:flex">' + I.close + '</button>';
+  document.body.appendChild(b);
+}
+
+function dismissVersionNotice() {
+  var el = document.getElementById('uvn');
+  if (el) el.remove();
 }
 
 async function forceRefresh() {
