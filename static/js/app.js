@@ -897,7 +897,11 @@ async function init() {
   U = await Store.getJSON('xyu');
   var hasSavedToken = !!(T && U);
 
-  var isPWA = window.location.protocol.startsWith('http') && !window.Capacitor;
+  // Capacitor 远程加载（server.url 指向公网后端）时 window.Capacitor 存在，
+  // 但页面本身已是后端同源，应走"同源相对路径"而非"寻址引导"分支。
+  // 判断依据：页面经 http(s) 承载，且 host 非 Capacitor 本地壳（localhost）即视为同源 PWA。
+  var _capLocal = window.Capacitor && /^(localhost|127\.0\.0\.1)$/.test(window.location.hostname);
+  var isPWA = window.location.protocol.startsWith('http') && !_capLocal;
 
   // ── 1. 寻址 ──
   //    PWA：前后端同域，直接用相对路径，跳过引导（省掉每次打开的额外网络等待）
@@ -991,7 +995,7 @@ async function validateTokenBackground(base) {
 // 前端仅保留 APP_VERSION 用于比对；后端升级后所有公网部署用户都能实时拉取到新提示。
 // ⚠ 发版时只需同步两处版本号：agent/version.py 与下方 APP_VERSION。
 // ═══════════════════════════════════════════
-const APP_VERSION = '2.9.0';
+const APP_VERSION = '3.0.0';
 
 // 新版本亮点文案由后端 /health 下发（agent/version.py），前端不再硬编码——
 // 后端升级后所有公网部署的用户都能实时拉取到最新提示内容
@@ -1090,10 +1094,12 @@ function dismissVersionNotice() {
 }
 
 async function forceRefresh() {
-  // 先清 SW 旧缓存，保证刷新后拿到最新资源
+  // 先清 SW 旧缓存，保证刷新后拿到最新资源（Capacitor WebView 无 SW，caches 可能不存在）
   try {
-    var keys = await caches.keys();
-    await Promise.all(keys.map(function (k) { return caches.delete(k); }));
+    if (window.caches && window.caches.keys) {
+      var keys = await caches.keys();
+      await Promise.all(keys.map(function (k) { return caches.delete(k); }));
+    }
   } catch (e) { /* 无缓存或失败，直接刷新 */ }
   location.reload();
 }
