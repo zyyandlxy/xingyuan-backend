@@ -991,7 +991,7 @@ async function validateTokenBackground(base) {
 // 前端仅保留 APP_VERSION 用于比对；后端升级后所有公网部署用户都能实时拉取到新提示。
 // ⚠ 发版时只需同步两处版本号：agent/version.py 与下方 APP_VERSION。
 // ═══════════════════════════════════════════
-const APP_VERSION = '2.8.0';
+const APP_VERSION = '2.9.0';
 
 // 新版本亮点文案由后端 /health 下发（agent/version.py），前端不再硬编码——
 // 后端升级后所有公网部署的用户都能实时拉取到最新提示内容
