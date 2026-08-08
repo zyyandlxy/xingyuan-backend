@@ -72,6 +72,18 @@ class ChatRequest(BaseModel):
     system_prompt: str | None = Field(
         default=None, description="系统提示词，会插入到消息列表最前"
     )
+    images: list[str] | None = Field(
+        default=None,
+        description="用户消息附带的图片（base64 data URI 列表），仅用于持久化与视觉识别，不进入 LLM content",
+    )
+
+    @field_validator("images")
+    @classmethod
+    def check_images(cls, v: list[str] | None) -> list[str] | None:
+        """校验图片数量上限"""
+        if v and len(v) > 9:
+            raise ValueError("最多同时发送 9 张图片")
+        return v
 
     @field_validator("messages")
     @classmethod

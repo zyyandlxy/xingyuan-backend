@@ -37,6 +37,16 @@ class Settings(BaseSettings):
         description="采样温度",
     )
 
+    # --- 智谱视觉（聊天图片识别）---
+    zhipu_vision_model: str = Field(
+        default="glm-4v-flash",
+        description="智谱多模态视觉模型，图片识别用（复用 zhipuai_api_key）",
+    )
+    zhipu_vision_base_url: str = Field(
+        default="https://open.bigmodel.cn/api/paas/v4",
+        description="智谱视觉 API 基础 URL（OpenAI 兼容）",
+    )
+
     # --- 服务认证 ---
     service_api_key: str = Field(
         default="",

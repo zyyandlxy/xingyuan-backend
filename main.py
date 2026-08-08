@@ -110,7 +110,7 @@ def create_app() -> FastAPI:
 
     app = FastAPI(
         title="星媛 Agent API",
-        version="2.7.0",
+        version="2.8.0",
         description="星媛 AI Agent — 智谱 GLM、流式 SSE、工具调用、自我迭代、PWA",
         lifespan=lifespan,
         docs_url="/docs",

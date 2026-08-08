@@ -279,11 +279,122 @@ svg.icon-fill{fill:currentColor;stroke:none}
 }
 .toast.show{opacity:1}
 
+/* ── 聊天壁纸 ──────────────────────────────── */
+/* 有壁纸时：背景图铺满 + 半透明暗色遮罩保证文字可读 */
+#chatScreen.has-wp::before{
+  content:"";position:absolute;inset:0;z-index:0;
+  background:rgba(10,10,26,.5);pointer-events:none;
+}
+#chatScreen.has-wp > *{position:relative;z-index:1}
+
+.wp-overlay{
+  position:fixed;inset:0;z-index:40;
+  background:rgba(0,0,0,.6);
+  display:flex;align-items:center;justify-content:center;
+  padding:24px;animation:in .2s ease;
+}
+.wp-box{
+  width:100%;max-width:340px;
+  background:var(--bg2);border:1px solid var(--bg3);
+  border-radius:var(--radius);padding:18px;
+  box-shadow:0 8px 40px rgba(0,0,0,.5);
+}
+.wp-title{font-size:15px;font-weight:600;margin-bottom:4px}
+.wp-sub{font-size:11px;color:var(--text3);margin-bottom:14px}
+.wp-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.wp-swatch{
+  aspect-ratio:4/3;border-radius:10px;cursor:pointer;
+  background:var(--bg3);position:relative;overflow:hidden;
+  border:2px solid transparent;background-size:cover;background-position:center;
+  transition:transform .15s,border-color .15s;
+}
+.wp-swatch:active{transform:scale(.96)}
+.wp-swatch.on{border-color:var(--accent)}
+.wp-swatch span{
+  position:absolute;left:0;right:0;bottom:0;
+  font-size:9px;color:#fff;text-align:center;
+  padding:2px 0;background:rgba(0,0,0,.55);
+}
+.wp-upload{display:flex;align-items:center;justify-content:center;border:2px dashed var(--bg3)}
+.wp-upload span{position:static;background:transparent;color:var(--accent2);font-size:11px;font-weight:500}
+.wp-upload.on{border-color:var(--accent)}
+.btn-ghost{
+  padding:12px;border-radius:var(--radius-sm);
+  border:1px solid var(--bg3);background:transparent;
+  color:var(--text2);font-size:14px;cursor:pointer;
+  transition:background .15s;
+}
+.btn-ghost:active{background:var(--bg3)}
+
+/* ── 个人资料 ──────────────────────────────── */
+.pf-av{
+  width:88px;height:88px;border-radius:50%;margin:4px auto 14px;
+  background:var(--bg3);display:flex;align-items:center;justify-content:center;
+  cursor:pointer;overflow:hidden;position:relative;border:1px solid var(--bg3);
+}
+.pf-av svg{width:44px;height:44px;color:var(--text2)}
+.pf-av-img{width:100%;height:100%;object-fit:cover;display:block}
+.pf-av-tip{
+  position:absolute;left:0;right:0;bottom:0;font-size:9px;color:#fff;
+  background:rgba(0,0,0,.55);text-align:center;padding:2px 0;opacity:0;transition:opacity .15s;
+}
+.pf-av:hover .pf-av-tip{opacity:1}
+.pf-label{display:block;font-size:11px;color:var(--text2);margin:10px 0 -8px;text-align:left}
+.pf-input{
+  width:100%;padding:12px 14px;border-radius:var(--radius-sm);margin-top:12px;
+  border:1px solid var(--bg3);background:var(--bg);color:var(--text);font-size:14px;
+  outline:none;box-sizing:border-box;transition:border-color .2s;
+}
+.pf-input:focus{border-color:var(--accent)}
+.pf-div{
+  margin:18px 0 2px;padding-top:16px;border-top:1px solid var(--bg3);
+  font-size:13px;font-weight:600;text-align:left;
+}
+/* 消息气泡里的用户头像 */
+.av-img{width:100%;height:100%;border-radius:50%;object-fit:cover}
+
+/* ── 聊天图片 ──────────────────────────────── */
+.attach-btn{
+  width:40px;height:40px;border-radius:50%;border:none;flex-shrink:0;
+  background:transparent;color:var(--text2);cursor:pointer;
+  display:flex;align-items:center;justify-content:center;
+  transition:background .15s;
+}
+.attach-btn:active{background:var(--bg3)}
+.attach-btn svg{width:19px;height:19px}
+.input-wrap{flex:1;display:flex;flex-direction:column;gap:6px;min-width:0}
+.img-tray{display:none;gap:8px;overflow-x:auto;padding-bottom:4px}
+.img-t{position:relative;width:52px;height:52px;flex-shrink:0}
+.img-t img{width:100%;height:100%;border-radius:10px;object-fit:cover;display:block}
+.img-del{
+  position:absolute;top:-6px;right:-6px;width:18px;height:18px;border-radius:50%;
+  border:none;background:var(--danger);color:#fff;padding:0;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;
+}
+.img-del svg{width:10px;height:10px}
+.img-sheet{
+  display:none;position:fixed;left:0;right:0;bottom:0;z-index:50;
+  background:var(--bg2);border-radius:18px 18px 0 0;border-top:1px solid var(--bg3);
+  padding:8px calc(8px + var(--safe-bottom));animation:in .2s ease;
+}
+.img-sheet.show{display:block}
+.img-menu-item{
+  display:flex;align-items:center;gap:10px;padding:14px;border-radius:12px;
+  font-size:14.5px;cursor:pointer;color:var(--text);
+}
+.img-menu-item:active{background:var(--bg3)}
+.img-menu-item.cancel{color:var(--text3);text-align:center;justify-content:center;margin-top:4px}
+.img-menu-item svg{width:18px;height:18px}
+.msg-img{
+  max-width:200px;max-height:200px;border-radius:10px;display:block;margin-top:6px;object-fit:cover;
+}
+
 /* ── Responsive ────────────────────────────── */
 @media(min-width:768px){
   .msg-b{max-width:72%}
   .msg-list{padding:16px 8%}
   .input-bar{padding:10px 8% calc(10px+var(--safe-bottom))}
+  .msg-img{max-width:260px;max-height:260px}
 }
 @media(min-width:1024px){
   .msg-b{max-width:60%}

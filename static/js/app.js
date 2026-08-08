@@ -32,8 +32,8 @@ const CONFIG = {
 // SVG 图标库（替代所有 emoji）
 // ═══════════════════════════════════════════
 const I = {
-  // 星标 — Logo / 助手头像
-  star: '<svg class="icon" viewBox="0 0 24 24"><path d="M12 2l2.4 7.2h7.6l-6 4.8 2.4 7.2-6.4-4.8-6.4 4.8 2.4-7.2-6-4.8h7.6z"/></svg>',
+  // 星标 — Logo / 助手头像（五色渐变：红→橙→黄→绿→紫）
+  star: '<svg class="icon" viewBox="0 0 24 24"><defs><linearGradient id="starGrad" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#ef4444"/><stop offset="20%" stop-color="#f97316"/><stop offset="40%" stop-color="#facc15"/><stop offset="60%" stop-color="#22c55e"/><stop offset="80%" stop-color="#a855f7"/></linearGradient></defs><path d="M12 2l2.4 7.2h7.6l-6 4.8 2.4 7.2-6.4-4.8-6.4 4.8 2.4-7.2-6-4.8h7.6z" style="fill:url(#starGrad);stroke:none"/></svg>',
   // 用户
   user: '<svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 4-7 8-7s8 3 8 7"/></svg>',
   // 发送箭头
@@ -117,6 +117,8 @@ let convs = [];       // 会话列表
 let busy = false;     // 是否正在生成
 let ac = null;        // AbortController
 let authMode = 'login';
+let _picked = [];     // 待发送图片 [{src}]
+let _lastImgs = [];   // 最近一次携带的图片（供重试）
 
 // ═══════════════════════════════════════════
 // UI 工具函数
@@ -185,7 +187,7 @@ async function doLogin(e) {
     const d = await r.json();
     if (!r.ok) throw new Error(d.detail || '失败');
     T = d.data.token;
-    U = { id: d.data.id, username: d.data.username, nickname: d.data.nickname };
+    U = { id: d.data.id, username: d.data.username, nickname: d.data.nickname, avatar: d.data.avatar || '' };
     await Store.set('xyt', T);
     await Store.setJSON('xyu', U);
     tt('欢迎回来，' + U.nickname + ' ✨');
@@ -218,7 +220,7 @@ async function doReg(e) {
     const d = await r.json();
     if (!r.ok) throw new Error(d.detail || '失败');
     T = d.data.token;
-    U = { id: d.data.id, username: d.data.username, nickname: d.data.nickname };
+    U = { id: d.data.id, username: d.data.username, nickname: d.data.nickname, avatar: d.data.avatar || '' };
     await Store.set('xyt', T);
     await Store.setJSON('xyu', U);
     tt('注册成功！' + U.nickname + ' 🎉');
@@ -243,12 +245,17 @@ function ab(r, c, retryCb) {
   const el = document.createElement('div');
   el.className = 'msg-row ' + r;
   const icon = r === 'user' ? I.user : r === 'assistant' ? I.star : '';
-  const avHtml = r === 'system' ? '' : '<div class="msg-av">' + icon + '</div>';
-  let h = avHtml + '<div class="msg-b">' + htm(c) + '</div>';
+  // 用户已设置头像时，用头像图片替代默认图标
+  const avHtml = r === 'system' ? '' :
+    (r === 'user' && U && U.avatar)
+      ? '<div class="msg-av"><img class="av-img" src="' + U.avatar + '" alt=""/></div>'
+      : '<div class="msg-av">' + icon + '</div>';
+  let h = avHtml + '<div class="msg-b"></div>';
   if (retryCb && r === 'system') {
     h += '<div class="msg-actions"><button class="retry-btn">🔄 重试</button></div>';
   }
   el.innerHTML = h;
+  renderMsgBody(el.querySelector('.msg-b'), c);
   if (retryCb && r === 'system') {
     el.querySelector('.retry-btn').onclick = retryCb;
   }
@@ -272,22 +279,26 @@ function kd(e) {
   if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
 }
 
-async function send(retryText) {
+async function send(retryText, retryImgs) {
   if (busy) { stop(); return; }
   hideFeedback();
   const inp = document.getElementById('inp');
-  const t = retryText || inp.value.trim();
-  if (!t) return;
+  const imgs = retryImgs || _picked.map(function (p) { return p.src; });
+  const hasImg = imgs.length > 0;
+  const text = (retryText || inp.value.trim()) || (hasImg ? '看看这张图片' : '');
+  if (!text && !hasImg) return;
   if (!retryText) {
     inp.value = ''; inp.style.height = 'auto';
-    ab('user', t);
+    _lastImgs = imgs;
+    clearTray();
+    ab('user', renderContentWithImages(text, imgs));
   }
   at();
   const btn = document.getElementById('sbtn');
   btn.innerHTML = I.stop;
   btn.classList.add('stop');
   busy = true;
-  await stream(t);
+  await stream(text, imgs);
   btn.innerHTML = I.send;
   btn.classList.remove('stop');
   busy = false;
@@ -295,7 +306,7 @@ async function send(retryText) {
 
 function stop() { if (ac) { ac.abort(); ac = null; } }
 
-async function stream(text) {
+async function stream(text, imgs) {
   ac = new AbortController();
   let b = null, full = '';
   try {
@@ -304,6 +315,7 @@ async function stream(text) {
       headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + T },
       body: JSON.stringify({
         messages: [{ role: 'user', content: text }],
+        images: (imgs && imgs.length) ? imgs : undefined,
         stream: true,
         conversation_id: cid || undefined,
       }),
@@ -326,7 +338,7 @@ async function stream(text) {
         return;
       }
       rt();
-      ab('system', '⚠ ' + detail, () => send(text));
+      ab('system', '⚠ ' + detail, () => send(text, imgs));
       return;
     }
     const reader = r.body.getReader();
@@ -360,7 +372,7 @@ async function stream(text) {
               sd();
             }
           } else if (ev === 'error') {
-            if (!b) { rt(); b = ab('system', '', () => send(text)); }
+            if (!b) { rt(); b = ab('system', '', () => send(text, imgs)); }
             b.querySelector('.msg-b').textContent = '⚠ ' + (p.error || '出错了');
           }
           ev = '';
@@ -372,7 +384,7 @@ async function stream(text) {
   } catch (e) {
     if (e.name !== 'AbortError') {
       rt();
-      ab('system', '⚠ ' + (e.message || '网络请求失败'), () => send(text));
+      ab('system', '⚠ ' + (e.message || '网络请求失败'), () => send(text, imgs));
     }
   }
   ac = null;
@@ -491,12 +503,380 @@ async function showMem() {
     });
     const d = await r.json();
     if (d.data && d.data.length > 0) {
+      // 高频提问类直接展示 value（含问题与次数），其余展示 key: value
       alert('🧠 星媛的记忆 (' + d.total + '条):\n\n' +
-        d.data.map(m => '• ' + m.key + ': ' + m.value).join('\n'));
+        d.data.map(m => '• ' + (m.category === 'frequent_question' ? m.value : m.key + ': ' + m.value)).join('\n'));
     } else {
       alert('🧠 还没有记忆，多和星媛聊天吧～');
     }
   } catch (e) { tt('加载失败'); }
+}
+
+// ═══════════════════════════════════════════
+// 聊天壁纸 — 用户自定义聊天背景（预设渐变 / 上传图片）
+// ═══════════════════════════════════════════
+const WPS = [
+  { name: '默认',   css: '' },
+  { name: '星河紫', css: 'radial-gradient(circle at 30% 20%, #6d28d9 0%, #1e1b4b 45%, #0a0a1a 80%)' },
+  { name: '极光',   css: 'linear-gradient(135deg, #0ea5e9 0%, #6366f1 45%, #a855f7 75%, #1e1b4b 100%)' },
+  { name: '落日',   css: 'linear-gradient(160deg, #1e1b4b 0%, #7c2d12 55%, #fb923c 100%)' },
+  { name: '深海',   css: 'linear-gradient(180deg, #0f172a 0%, #1e3a8a 55%, #0891b2 100%)' },
+  { name: '森林',   css: 'linear-gradient(160deg, #0a0f0a 0%, #14532d 55%, #4ade80 100%)' },
+  { name: '樱粉',   css: 'linear-gradient(160deg, #1b0f1e 0%, #831843 55%, #f9a8d4 100%)' },
+];
+const WP_STORE = 'xy_bg';     // 值：''(默认) / 'preset:N' / 'img'
+const WP_IMG = 'xy_bg_img';   // 上传图片 dataURL
+
+async function getWpSetting() {
+  const raw = await Store.get(WP_STORE);
+  if (!raw) return { type: 'default' };
+  if (raw.indexOf('preset:') === 0) return { type: 'preset', idx: parseInt(raw.slice(7), 10) || 0 };
+  if (raw === 'img') return { type: 'img' };
+  return { type: 'default' };
+}
+
+function wpBgCss(setting, imgData) {
+  if (setting.type === 'preset') {
+    const p = WPS[setting.idx];
+    return p && p.css ? p.css : '';
+  }
+  if (setting.type === 'img' && imgData) return 'url("' + imgData + '") center/cover no-repeat';
+  return '';
+}
+
+async function applyWp() {
+  const cs = document.getElementById('chatScreen');
+  if (!cs) return;
+  const setting = await getWpSetting();
+  const bg = setting.type === 'img'
+    ? wpBgCss(setting, await Store.get(WP_IMG))
+    : wpBgCss(setting);
+  cs.style.background = bg;
+  cs.classList.toggle('has-wp', !!bg);
+}
+
+function showWp() {
+  closeSb();
+  if (document.getElementById('wpm')) return;
+  var ov = document.createElement('div');
+  ov.id = 'wpm';
+  ov.className = 'wp-overlay';
+  ov.addEventListener('click', function (e) { if (e.target === ov) closeWp(); });
+  var box = document.createElement('div');
+  box.className = 'wp-box';
+  box.innerHTML =
+    '<div class="wp-title">聊天壁纸</div>' +
+    '<div class="wp-sub">选择一个背景，或上传自己的图片</div>' +
+    '<div class="wp-grid" id="wplist"></div>' +
+    '<div style="display:flex;gap:10px;margin-top:14px">' +
+    '<button class="btn-primary" style="flex:1" onclick="pickWpImg()">上传图片</button>' +
+    '<button class="btn-ghost" style="flex:1" onclick="closeWp()">完成</button>' +
+    '</div>';
+  ov.appendChild(box);
+  document.body.appendChild(ov);
+  renderWpGrid();
+}
+
+async function renderWpGrid() {
+  const grid = document.getElementById('wplist');
+  if (!grid) return;
+  const cur = await getWpSetting();
+  const hasImg = cur.type === 'img';
+  const onFor = function (i) {
+    if (hasImg) return '';
+    if (cur.type === 'preset') return i === cur.idx ? ' on' : '';
+    return i === 0 ? ' on' : '';
+  };
+  grid.innerHTML = WPS.map(function (p, i) {
+    const style = p.css ? 'style="background:' + p.css + '"' : '';
+    return '<div class="wp-swatch' + onFor(i) + '" ' + style + ' onclick="setWp(' + i + ')">' +
+      '<span>' + p.name + '</span></div>';
+  }).join('') +
+    '<div class="wp-swatch wp-upload' + (hasImg ? ' on' : '') + '" onclick="pickWpImg()">' +
+    '<span>' + (hasImg ? '已上传' : '上传图片') + '</span></div>';
+}
+
+async function setWp(i) {
+  await Store.set(WP_STORE, i === 0 ? '' : 'preset:' + i);
+  if (i === 0) await Store.remove(WP_IMG);
+  await applyWp();
+  closeWp();
+  tt(i === 0 ? '已恢复默认壁纸' : '已应用壁纸');
+}
+
+function pickWpImg() {
+  var inp = document.getElementById('wpFile');
+  if (!inp) {
+    inp = document.createElement('input');
+    inp.id = 'wpFile';
+    inp.type = 'file';
+    inp.accept = 'image/*';
+    inp.style.display = 'none';
+    inp.addEventListener('change', function () { if (inp.files && inp.files[0]) onWpFile(inp.files[0]); });
+    document.body.appendChild(inp);
+  }
+  inp.click();
+}
+
+async function onWpFile(file) {
+  if (file.size > 12 * 1024 * 1024) { tt('图片太大，请小于 12MB'); return; }
+  try {
+    const img = await loadImage(file);
+    const dataUrl = compressImage(img, 1280, 0.78);
+    await Store.set(WP_STORE, 'img');
+    await Store.set(WP_IMG, dataUrl);
+    await applyWp();
+    closeWp();
+    tt('已设置自定义壁纸');
+  } catch (e) { tt('图片处理失败，请换一张'); }
+}
+
+function loadImage(file) {
+  return new Promise(function (res, rej) {
+    const fr = new FileReader();
+    fr.onload = function () {
+      const im = new Image();
+      im.onload = function () { res(im); };
+      im.onerror = rej;
+      im.src = fr.result;
+    };
+    fr.onerror = rej;
+    fr.readAsDataURL(file);
+  });
+}
+
+function compressImage(img, maxW, q) {
+  let w = img.width, h = img.height;
+  if (w > maxW) { h = Math.round(h * maxW / w); w = maxW; }
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  c.getContext('2d').drawImage(img, 0, 0, w, h);
+  return c.toDataURL('image/jpeg', q);
+}
+
+// ═══════════════════════════════════════════
+// 聊天图片 — 选择/压缩/预览/渲染
+// ═══════════════════════════════════════════
+
+// 渲染气泡内容：把 [图片]data:...[/图片] 标记解析为 <img>，其余文本 createTextNode 安全转义
+function renderMsgBody(bEl, c) {
+  const re = /\[图片\](.*?)\[\/图片\]/gs;
+  let last = 0, m;
+  while ((m = re.exec(c)) !== null) {
+    if (m.index > last) bEl.appendChild(document.createTextNode(c.slice(last, m.index)));
+    const uri = m[1];
+    if (/^data:image\/(?:jpeg|png|webp|gif);base64,/.test(uri)) {
+      const img = document.createElement('img');
+      img.className = 'msg-img';
+      img.src = uri;
+      img.alt = '[图片]';
+      bEl.appendChild(img);
+    } else {
+      bEl.appendChild(document.createTextNode('[图片]' + uri + '[/图片]'));
+    }
+    last = m.index + m[0].length;
+  }
+  if (last < c.length) bEl.appendChild(document.createTextNode(c.slice(last)));
+  if (!bEl.hasChildNodes()) bEl.appendChild(document.createTextNode(c));
+}
+
+// 上屏用存储形态：text + 每张图一个 [图片] 标记（与后端持久化 B 视图同构）
+function renderContentWithImages(text, imgs) {
+  return text + (imgs || []).map(function (u) { return '[图片]' + u + '[/图片]'; }).join('');
+}
+
+function showImgMenu() { document.getElementById('imgMenu').classList.add('show'); }
+function hideImgMenu() { document.getElementById('imgMenu').classList.remove('show'); }
+function pickImgCam() { hideImgMenu(); getImgInput('cam').click(); }
+function pickImgGal() { hideImgMenu(); getImgInput('gal').click(); }
+
+// 惰性创建 file input（复用 pickWpImg 模式）：相机 capture=environment，相册 multiple 多选
+function getImgInput(kind) {
+  const id = kind === 'cam' ? 'imgCam' : 'imgGal';
+  let inp = document.getElementById(id);
+  if (!inp) {
+    inp = document.createElement('input');
+    inp.id = id;
+    inp.type = 'file';
+    inp.accept = 'image/*';
+    inp.style.display = 'none';
+    if (kind === 'cam') inp.setAttribute('capture', 'environment');
+    else inp.setAttribute('multiple', '');
+    inp.addEventListener('change', function () {
+      if (inp.files && inp.files.length) onImgFiles(Array.from(inp.files));
+      inp.value = '';   // 允许连续选择同一文件
+    });
+    document.body.appendChild(inp);
+  }
+  return inp;
+}
+
+async function onImgFiles(files) {
+  for (const f of files) {
+    if (_picked.length >= 9) { tt('最多发送 9 张图片'); break; }
+    if (f.size > 12 * 1024 * 1024) { tt('图片太大，请小于 12MB'); continue; }
+    try {
+      const img = await loadImage(f);
+      _picked.push({ src: compressImage(img, 1280, 0.78) });
+    } catch (e) { /* 坏图跳过 */ }
+  }
+  renderImgTray();
+}
+
+function renderImgTray() {
+  const tray = document.getElementById('itray');
+  tray.innerHTML = '';
+  tray.style.display = _picked.length ? 'flex' : 'none';
+  _picked.forEach(function (p, i) {
+    const d = document.createElement('div');
+    d.className = 'img-t';
+    d.innerHTML = '<img src="' + p.src + '" alt=""/>' +
+      '<button class="img-del" onclick="delImg(' + i + ')">' + I.close + '</button>';
+    tray.appendChild(d);
+  });
+}
+
+function delImg(i) { _picked.splice(i, 1); renderImgTray(); }
+function clearTray() { _picked = []; renderImgTray(); }
+
+function closeWp() {
+  const ov = document.getElementById('wpm');
+  if (ov) ov.remove();
+}
+
+// ═══════════════════════════════════════════
+// 个人资料 — 昵称 / 头像 / 密码设置
+// ═══════════════════════════════════════════
+var _pfAvatar = '';   // 本次会话尚未保存的新头像 dataURL
+
+function showProfile() {
+  closeSb();
+  if (document.getElementById('pfm')) return;
+  var ov = document.createElement('div');
+  ov.id = 'pfm';
+  ov.className = 'wp-overlay';
+  ov.addEventListener('click', function (e) { if (e.target === ov) closeProfile(); });
+  var box = document.createElement('div');
+  box.className = 'wp-box';
+  box.innerHTML =
+    '<div class="wp-title">个人资料</div>' +
+    '<div class="pf-av" onclick="pickAvatar()" title="点击更换头像">' + avatarPreviewHtml() +
+    '<span class="pf-av-tip">点击更换头像</span></div>' +
+    '<label class="pf-label">昵称</label>' +
+    '<input class="pf-input" id="pfNick" maxlength="30" placeholder="给自己取个名字"/>' +
+    '<div style="display:flex;gap:10px;margin-top:12px">' +
+    '<button class="btn-primary" style="flex:1" onclick="saveProfile()">保存资料</button>' +
+    '<button class="btn-ghost" style="flex:1" onclick="closeProfile()">完成</button>' +
+    '</div>' +
+    '<div class="pf-div">修改登录密码</div>' +
+    '<label class="pf-label">当前密码</label>' +
+    '<input class="pf-input" id="pfOld" type="password" placeholder="当前密码"/>' +
+    '<label class="pf-label">新密码</label>' +
+    '<input class="pf-input" id="pfNew" type="password" placeholder="至少8位，含字母和数字"/>' +
+    '<label class="pf-label">确认新密码</label>' +
+    '<input class="pf-input" id="pfNew2" type="password" placeholder="再次输入"/>' +
+    '<button class="btn-primary" style="margin-top:12px" onclick="savePwd()">更新密码</button>';
+  ov.appendChild(box);
+  document.body.appendChild(ov);
+  document.getElementById('pfNick').value = (U && U.nickname) || '';
+}
+
+function avatarPreviewHtml() {
+  var av = U && U.avatar ? U.avatar : '';
+  return av
+    ? '<img class="pf-av-img" src="' + av + '" alt="头像"/>'
+    : I.user;
+}
+
+function pickAvatar() {
+  var inp = document.getElementById('pfFile');
+  if (!inp) {
+    inp = document.createElement('input');
+    inp.id = 'pfFile';
+    inp.type = 'file';
+    inp.accept = 'image/*';
+    inp.style.display = 'none';
+    inp.addEventListener('change', function () { if (inp.files && inp.files[0]) onAvatarFile(inp.files[0]); });
+    document.body.appendChild(inp);
+  }
+  inp.click();
+}
+
+async function onAvatarFile(file) {
+  if (file.size > 12 * 1024 * 1024) { tt('图片太大，请小于 12MB'); return; }
+  try {
+    var img = await loadImage(file);
+    var dataUrl = compressAvatar(img);
+    var av = document.getElementById('pfm').querySelector('.pf-av');
+    if (av) {
+      av.innerHTML = '<img class="pf-av-img" src="' + dataUrl + '" alt="头像"/>' +
+        '<span class="pf-av-tip">点击更换头像</span>';
+    }
+    _pfAvatar = dataUrl;
+    tt('头像已选择，点"保存资料"生效');
+  } catch (e) { tt('图片处理失败，请换一张'); }
+}
+
+function compressAvatar(img) {
+  var size = 128;
+  var s = Math.min(img.width, img.height);
+  var c = document.createElement('canvas');
+  c.width = size; c.height = size;
+  c.getContext('2d').drawImage(img, (img.width - s) / 2, (img.height - s) / 2, s, s, 0, 0, size, size);
+  return c.toDataURL('image/jpeg', 0.82);
+}
+
+async function saveProfile() {
+  var nick = document.getElementById('pfNick').value.trim();
+  if (!nick) { tt('昵称不能为空'); return; }
+  var body = { nickname: nick };
+  if (_pfAvatar) body.avatar = _pfAvatar;
+  try {
+    var r = await fetch(A + '/auth/me', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + T },
+      body: JSON.stringify(body),
+    });
+    var d = await r.json();
+    if (!r.ok) throw new Error(d.detail || '保存失败');
+    U.nickname = d.data.nickname;
+    U.avatar = d.data.avatar;
+    await Store.setJSON('xyu', U);
+    document.getElementById('ul').textContent = U.nickname;
+    _pfAvatar = '';
+    tt('资料已保存 ✨');
+    closeProfile();
+  } catch (e) { tt('❌ ' + e.message); }
+}
+
+async function savePwd() {
+  var oldp = document.getElementById('pfOld').value;
+  var np = document.getElementById('pfNew').value;
+  var np2 = document.getElementById('pfNew2').value;
+  if (!oldp) { tt('请输入当前密码'); return; }
+  if (np.length < 8) { tt('新密码至少需要 8 位'); return; }
+  if (!/[a-zA-Z]/.test(np)) { tt('新密码需要包含至少一个字母'); return; }
+  if (!/\d/.test(np)) { tt('新密码需要包含至少一个数字'); return; }
+  if (np !== np2) { tt('两次输入的新密码不一致'); return; }
+  try {
+    var r = await fetch(A + '/auth/me/password', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + T },
+      body: JSON.stringify({ old_password: oldp, new_password: np }),
+    });
+    var d = await r.json();
+    if (!r.ok) throw new Error(d.detail || '修改失败');
+    document.getElementById('pfOld').value = '';
+    document.getElementById('pfNew').value = '';
+    document.getElementById('pfNew2').value = '';
+    tt('密码已更新，下次登录请使用新密码');
+  } catch (e) { tt('❌ ' + e.message); }
+}
+
+function closeProfile() {
+  const ov = document.getElementById('pfm');
+  if (ov) ov.remove();
+  _pfAvatar = '';
 }
 
 // ═══════════════════════════════════════════
@@ -505,6 +885,7 @@ async function showMem() {
 function enterChat() {
   document.getElementById('ul').textContent = U.nickname;
   ss('chatScreen');
+  applyWp();
   loadCvs();
 }
 
@@ -607,7 +988,7 @@ async function validateTokenBackground(base) {
 // ⚠ 发版时必须同步递增三处版本号：
 //   main.py create_app(version=...) 、static/routers/health.py 返回的 version 、下方 APP_VERSION
 // ═══════════════════════════════════════════
-const APP_VERSION = '2.7.0';
+const APP_VERSION = '2.8.0';
 
 var _dismissedVer = '';
 try { _dismissedVer = localStorage.getItem('xy_uver') || ''; } catch (e) { /* 隐私模式等 */ }

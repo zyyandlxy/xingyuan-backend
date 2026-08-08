@@ -6,6 +6,7 @@ POST /chat/stream  — SSE 流式聊天
 
 from __future__ import annotations
 
+import asyncio
 import json
 import traceback
 
@@ -20,9 +21,10 @@ from agent.config import get_settings
 from agent.exceptions import AppException, ProviderError, ProviderAuthError, ProviderTimeoutError
 from agent.middleware import request_id_var
 from agent.models import ChatRequest, ChatResponse, ErrorResponse, Message
-from agent.iteration import generate_persona_prompt, init_iteration_tables, learn_from_message
+from agent.iteration import generate_persona_prompt, init_iteration_tables, learn_from_message, record_question
 from agent.store import get_store
 from agent.users import verify_token
+from agent.vision import compose_stored_content, describe_images, inject_vision_content
 
 router = APIRouter()
 
@@ -85,6 +87,23 @@ async def _learn_and_personalize(request: ChatRequest, user_id: str, is_guest: b
             )
 
 
+async def _prepare_for_llm(request: ChatRequest) -> ChatRequest:
+    """有 images 时：智谱视觉转文字描述 → 深拷贝注入文本；无 images 返回原 request。
+
+    返回的 request 仅供 chat()/chat_stream() 使用（C 视图）；
+    持久化、学习、计数仍走原 request 的纯文本（A 视图）与 images 字段（B 视图）。
+    """
+    if not request.images:
+        return request
+    last_user = next((m for m in reversed(request.messages) if m.role == "user"), None)
+    desc = await describe_images(request.images, last_user.content if last_user else "")
+    llm = request.model_copy(deep=True)
+    target = next((m for m in reversed(llm.messages) if m.role == "user"), None)
+    if target and desc:
+        target.content = inject_vision_content(target.content, desc)
+    return llm
+
+
 @router.post("", response_model=ChatResponse, summary="非流式聊天")
 async def chat_endpoint(
     request: ChatRequest,
@@ -112,13 +131,26 @@ async def chat_endpoint(
         await store.add_message(cid, msg.role, msg.content,
                                 name=msg.name, tool_call_id=msg.tool_call_id)
 
-    # 先持久化用户消息
+    llm_request = await _prepare_for_llm(request)
+
+    # 先持久化用户消息（末条用户消息若有图片，附加 [图片] 标记供历史回放）
+    last_user_msg = next((m for m in reversed(request.messages) if m.role == "user"), None)
     for msg in request.messages:
         if msg.role != "system":
-            await save_msg(conv_id, msg)
+            content = (compose_stored_content(msg.content, request.images)
+                       if (request.images and msg is last_user_msg) else msg.content)
+            await store.add_message(conv_id, msg.role, content,
+                                    name=msg.name, tool_call_id=msg.tool_call_id)
+
+    # 高频提问统计：只统计本轮最后一条用户消息（避免重算历史）
+    if not is_guest and last_user_msg:
+        try:
+            await record_question(user_id, last_user_msg.content)
+        except Exception:
+            pass
 
     try:
-        response = await chat(request, conv_id)
+        response = await chat(llm_request, conv_id)
 
         if response.content:
             await save_msg(conv_id, Message(role="assistant", content=response.content))
@@ -161,16 +193,29 @@ async def chat_stream_endpoint(
             user_id=user_id,
         )
 
-    # 先持久化用户消息
+    # 有图片时提前转描述（在 event_generator 之前 await，闭包捕获注入结果）
+    llm_request = await _prepare_for_llm(request)
+
+    # 先持久化用户消息（末条用户消息若有图片，附加 [图片] 标记供历史回放）
+    last_user_msg = next((m for m in reversed(request.messages) if m.role == "user"), None)
     for msg in request.messages:
         if msg.role != "system":
-            await store.add_message(conv_id, msg.role, msg.content,
+            content = (compose_stored_content(msg.content, request.images)
+                       if (request.images and msg is last_user_msg) else msg.content)
+            await store.add_message(conv_id, msg.role, content,
                                     name=msg.name, tool_call_id=msg.tool_call_id)
+
+    # 高频提问统计：只统计本轮最后一条用户消息；流式用后台任务，不拖慢首字
+    if not is_guest and last_user_msg:
+        try:
+            asyncio.create_task(record_question(user_id, last_user_msg.content))
+        except Exception:
+            pass
 
     async def event_generator():
         full_content = ""
         try:
-            async for chunk in chat_stream(request, conv_id):
+            async for chunk in chat_stream(llm_request, conv_id):
                 full_content += chunk.delta
                 yield {"event": "delta", "data": chunk.model_dump_json()}
 

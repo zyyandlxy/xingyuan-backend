@@ -10,6 +10,11 @@ import pytest
 from fastapi.testclient import TestClient
 
 
+def pytest_configure(config):
+    """注册自定义标记，避免 unknown-mark 警告"""
+    config.addinivalue_line("markers", "no_db: 纯单元测试，跳过 _reset_test_db 数据库重置")
+
+
 def _test_database_url() -> str:
     """返回 Neon 测试库连接串；未设置 DATABASE_URL 则跳过数据库相关测试。
 
@@ -48,12 +53,15 @@ def settings():
 
 
 @pytest.fixture(autouse=True)
-def _reset_test_db():
+def _reset_test_db(request):
     """跑测试前清空测试库中的业务表，避免用例间互相污染。
 
     仅在设置了 DATABASE_URL 时生效（未设置则数据库相关用例被 _test_database_url 跳过）。
+    @pytest.mark.no_db 的纯单元测试跳过数据库连接与 TRUNCATE。
     全新库尚未建表时忽略 UndefinedTableError——表会由首个 TestClient 的 lifespan 创建。
     """
+    if request.node.get_closest_marker("no_db"):
+        return
     url = os.environ.get("DATABASE_URL", "").strip()
     if not url:
         return
@@ -67,7 +75,8 @@ def _reset_test_db():
             try:
                 await conn.execute(
                     "TRUNCATE TABLE conversations, messages, users, login_history, "
-                    "agent_memory, agent_feedback, agent_evolution RESTART IDENTITY CASCADE"
+                    "agent_memory, agent_feedback, agent_evolution, question_stats "
+                    "RESTART IDENTITY CASCADE"
                 )
             except UndefinedTableError:
                 pass  # 全新库还没建表，交给 TestClient lifespan 创建

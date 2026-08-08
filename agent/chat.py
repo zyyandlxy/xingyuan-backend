@@ -22,6 +22,7 @@ from agent.models import (
     TokenUsage,
     Tool,
 )
+from agent.vision import strip_image_markers
 
 
 # ═══════════════════════════════════════════
@@ -316,7 +317,8 @@ def _build_messages(request: ChatRequest) -> list[dict[str, Any]]:
         messages.append({"role": "system", "content": request.system_prompt})
 
     for msg in request.messages:
-        m: dict[str, Any] = {"role": msg.role, "content": msg.content}
+        # 防御：剥离历史消息里可能残留的 [图片]...[/图片] 标记，杜绝 base64 进 LLM 上下文
+        m: dict[str, Any] = {"role": msg.role, "content": strip_image_markers(msg.content)}
         if msg.name:
             m["name"] = msg.name
         if msg.tool_call_id:

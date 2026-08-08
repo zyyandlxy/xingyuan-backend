@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 import uuid
 from datetime import datetime, timezone
@@ -48,8 +49,21 @@ CREATE TABLE IF NOT EXISTS agent_evolution (
     applied_at  TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS question_stats (
+    id          TEXT PRIMARY KEY,
+    user_id     TEXT NOT NULL,
+    qkey        TEXT NOT NULL,
+    qtext       TEXT NOT NULL,
+    count       INTEGER NOT NULL DEFAULT 1,
+    first_at    TEXT NOT NULL,
+    last_at     TEXT NOT NULL,
+    updated_at  TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_memory_user ON agent_memory(user_id, category);
 CREATE INDEX IF NOT EXISTS idx_feedback_user ON agent_feedback(user_id, created_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_qstats_user_key ON question_stats(user_id, qkey);
+CREATE INDEX IF NOT EXISTS idx_qstats_user ON question_stats(user_id);
 """
 
 
@@ -264,6 +278,62 @@ async def learn_from_message(user_id: str, content: str):
                 if extracted and len(extracted) > 1:
                     await remember(user_id, key, extracted, category, confidence=0.6)
                     break  # 每条消息只触发一个学习模式
+
+
+# ═══════════════════════════════════════════
+# 高频提问统计 — 用户常问的问题（>= 阈值自动记入记忆，供用户查看）
+# ═══════════════════════════════════════════
+
+_QUESTION_THRESHOLD = 3  # 同一问题提问达到该次数，写入 agent_memory
+
+
+def _normalize_question(text: str) -> str:
+    """归一化文本用于去重统计：去空白/常见标点/转小写（保留中文）"""
+    return re.sub(r"[\s\.\,\。\，\！\!\？\?\、\；\;\：\:\-\_\'\"“”‘’\(\)\[\]【】]+", "", text).lower()
+
+
+async def record_question(user_id: str, content: str):
+    """统计用户问题频率；同一问题计数 >= _QUESTION_THRESHOLD 时记入记忆"""
+    if not content:
+        return
+    text = content.strip()
+    qkey = _normalize_question(text)
+    if not qkey or len(qkey) < 2:
+        return
+
+    store = await get_store()
+    now = datetime.now(timezone.utc).isoformat()
+    async with _tx(store) as db:
+        row = await _fetchone(
+            db,
+            "SELECT id, count FROM question_stats WHERE user_id=$1 AND qkey=$2",
+            (user_id, qkey),
+        )
+        if row:
+            new_count = row["count"] + 1
+            await _execute(
+                db,
+                "UPDATE question_stats SET count=$1, qtext=$2, last_at=$3, updated_at=$4 WHERE id=$5",
+                (new_count, text[:120], now, now, row["id"]),
+            )
+        else:
+            new_count = 1
+            await _execute(
+                db,
+                "INSERT INTO question_stats (id, user_id, qkey, qtext, count, first_at, last_at, updated_at) "
+                "VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
+                (f"qs_{uuid.uuid4().hex[:12]}", user_id, qkey, text[:120], new_count, now, now, now),
+            )
+
+    if new_count >= _QUESTION_THRESHOLD:
+        # 写入记忆：key 归一化（内部），value 面向用户展示（前端按类别展示 value）
+        await remember(
+            user_id,
+            f"q_{qkey}",
+            f"你常问：「{text[:40]}」（已提问 {new_count} 次）",
+            category="frequent_question",
+            confidence=0.8,
+        )
 
 
 # ═══════════════════════════════════════════

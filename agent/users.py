@@ -181,6 +181,7 @@ async def register_user(username: str, password: str, nickname: str = "") -> dic
         "id": user_id,
         "username": username,
         "nickname": nickname or username,
+        "avatar": "",
         "token": token,
     }
 
@@ -228,6 +229,7 @@ async def login_user(username: str, password: str, ip: str = "", device: str = "
         "id": user_id,
         "username": row["username"],
         "nickname": row["nickname"] or row["username"],
+        "avatar": row["avatar"],
         "token": token,
         "login_count": login_count,
         "last_login": now,
@@ -251,6 +253,51 @@ async def get_user_by_id(user_id: str) -> dict | None:
         "created_at": row["created_at"],
         "last_login": row["last_login"],
     }
+
+
+async def update_profile(
+    user_id: str,
+    nickname: str | None = None,
+    avatar: str | None = None,
+) -> dict | None:
+    """更新用户资料（昵称 / 头像），返回更新后的用户信息；用户不存在返回 None"""
+    from agent.store import get_store
+    store = await get_store()
+
+    if nickname is not None:
+        nickname = nickname.strip()[:30]
+
+    async with _tx(store) as db:
+        row = await _fetchone(db, "SELECT id FROM users WHERE id = $1", (user_id,))
+        if not row:
+            return None
+        if nickname is not None and avatar is not None:
+            await _execute(
+                db, "UPDATE users SET nickname=$1, avatar=$2 WHERE id=$3",
+                (nickname, avatar, user_id),
+            )
+        elif nickname is not None:
+            await _execute(db, "UPDATE users SET nickname=$1 WHERE id=$2", (nickname, user_id))
+        elif avatar is not None:
+            await _execute(db, "UPDATE users SET avatar=$1 WHERE id=$2", (avatar, user_id))
+    return await get_user_by_id(user_id)
+
+
+async def change_password(user_id: str, old_password: str, new_password: str) -> None:
+    """修改登录密码：校验旧密码 + 新密码强度。校验失败抛 ValueError。"""
+    from agent.store import get_store
+    store = await get_store()
+
+    async with _tx(store) as db:
+        row = await _fetchone(db, "SELECT username, password FROM users WHERE id = $1", (user_id,))
+        if not row:
+            raise ValueError("用户不存在")
+        if not bcrypt.checkpw(old_password.encode(), row["password"].encode()):
+            raise ValueError("当前密码错误")
+        if err := validate_password_strength(new_password, row["username"]):
+            raise ValueError(err)
+        pwd_hash = bcrypt.hashpw(new_password.encode(), bcrypt.gensalt()).decode()
+        await _execute(db, "UPDATE users SET password=$1 WHERE id=$2", (pwd_hash, user_id))
 
 
 async def get_login_history(user_id: str, limit: int = 20) -> list[dict]:

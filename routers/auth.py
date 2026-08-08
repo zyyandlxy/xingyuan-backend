@@ -8,11 +8,13 @@ from fastapi import APIRouter, HTTPException, Header, Request
 from pydantic import BaseModel, Field
 
 from agent.users import (
+    change_password,
     get_login_history,
     get_user_by_id,
     init_user_tables,
     login_user,
     register_user,
+    update_profile,
     validate_password_strength,
     validate_username,
     verify_token,
@@ -34,6 +36,16 @@ class RegisterRequest(BaseModel):
 class LoginRequest(BaseModel):
     username: str = Field(..., description="用户名")
     password: str = Field(..., description="密码")
+
+
+class ProfileUpdate(BaseModel):
+    nickname: str | None = Field(default=None, max_length=30, description="昵称")
+    avatar: str | None = Field(default=None, max_length=300000, description="头像 dataURL")
+
+
+class PasswordChange(BaseModel):
+    old_password: str = Field(..., max_length=100, description="当前密码")
+    new_password: str = Field(..., min_length=8, max_length=100, description="新密码（至少8位，含字母和数字）")
 
 
 # ═══════════════════════════════════════════
@@ -125,3 +137,35 @@ async def login_history(authorization: str = Header(default="")):
 
     history = await get_login_history(payload["sub"])
     return {"success": True, "data": history}
+
+
+def _require_user_id(authorization: str) -> str:
+    """解析 Authorization 返回 user_id；未登录 / token 无效抛 401"""
+    token = authorization.removeprefix("Bearer ").strip()
+    if not token:
+        raise HTTPException(status_code=401, detail="未登录")
+    payload = verify_token(token)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Token 无效或已过期")
+    return payload["sub"]
+
+
+@router.put("/me", summary="更新资料（昵称 / 头像）")
+async def update_me(body: ProfileUpdate, authorization: str = Header(default="")):
+    """更新当前用户的昵称或头像"""
+    user_id = _require_user_id(authorization)
+    user = await update_profile(user_id, body.nickname, body.avatar)
+    if not user:
+        raise HTTPException(status_code=404, detail="用户不存在")
+    return {"success": True, "message": "资料已更新", "data": user}
+
+
+@router.put("/me/password", summary="修改登录密码")
+async def change_my_password(body: PasswordChange, authorization: str = Header(default="")):
+    """校验旧密码后修改登录密码"""
+    user_id = _require_user_id(authorization)
+    try:
+        await change_password(user_id, body.old_password, body.new_password)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"success": True, "message": "密码已更新，下次登录请使用新密码"}

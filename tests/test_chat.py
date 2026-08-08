@@ -6,6 +6,9 @@
 
 from __future__ import annotations
 
+import asyncio
+import os
+import re
 from unittest.mock import MagicMock, patch
 
 import httpx
@@ -252,3 +255,136 @@ def test_chat_stream_guest_id_respected(client):
     list_a = client.get("/conversations", headers={"X-Guest-ID": "guest-aaa-111"}).json()
     assert all(c["id"] == c1 for c in list_a["items"])
     assert list_a["total"] == 1
+
+
+# ═══════════════════════════════════════════
+# 聊天图片识别
+# ═══════════════════════════════════════════
+
+IMG_URI = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEAAAAAAAD"
+IMG_B64 = IMG_URI.split(",", 1)[1]
+
+
+def _dump_db_blob() -> str:
+    """把测试库 question_stats + agent_memory 拼接成字符串供断言（学习/计数不得含 base64）"""
+    import asyncpg
+
+    async def _run():
+        conn = await asyncpg.connect(os.environ["DATABASE_URL"])
+        try:
+            qs = await conn.fetch("SELECT qkey, qtext FROM question_stats")
+            mem = await conn.fetch("SELECT value FROM agent_memory")
+        finally:
+            await conn.close()
+        return (
+            " ".join(r["qkey"] + " " + r["qtext"] for r in qs)
+            + " "
+            + " ".join(m["value"] for m in mem)
+        )
+
+    return asyncio.run(_run())
+
+
+def test_chat_with_images_persists_markers_and_pure_stats(client, auth_headers):
+    """带图消息：DB 存 [图片] 标记；LLM 收到描述而非标记；学习/计数干净"""
+    with patch("routers.chat.describe_images", return_value="一张猫的照片") as mdesc, \
+         patch("agent.chat._get_client") as mock_get:
+        mock_get.return_value.chat.completions.create.return_value = _make_plain_response("看到了～")
+        r = client.post(
+            "/chat",
+            headers=auth_headers,
+            json={"messages": [{"role": "user", "content": "看下这个"}], "images": [IMG_URI]},
+        )
+    assert r.status_code == 200, r.text
+    mdesc.assert_awaited_once()
+    conv_id = r.json()["conversation_id"]
+
+    # 1) 存储视图：含 [图片] 标记、base64 与原文（供历史回放）
+    detail = client.get(f"/conversations/{conv_id}", headers=auth_headers).json()
+    user_contents = [m["content"] for m in detail["messages"] if m["role"] == "user"]
+    assert any("[图片]" in c and IMG_B64 in c and "看下这个" in c for c in user_contents)
+
+    # 2) LLM 视图：收到描述而非标记/base64
+    create = mock_get.return_value.chat.completions.create
+    msgs = create.call_args.kwargs["messages"]
+    last_user = [m for m in msgs if m["role"] == "user"][-1]
+    assert "[图片内容]" in last_user["content"]
+    assert "一张猫的照片" in last_user["content"]
+    assert "data:image" not in last_user["content"]
+    assert "[图片]" not in last_user["content"]
+
+    # 3) record_question / 记忆干净：不含 base64
+    blob = _dump_db_blob()
+    assert "data:image" not in blob and IMG_B64 not in blob
+
+
+def test_chat_with_images_no_key_fallback(client):
+    """视觉识别不可用（占位描述）：聊天仍正常，LLM 收到占位文案"""
+    placeholder = "（用户发送了 1 张图片，但图片内容暂时无法解析）"
+    with patch("routers.chat.describe_images", return_value=placeholder), \
+         patch("agent.chat._get_client") as mock_get:
+        mock_get.return_value.chat.completions.create.return_value = _make_plain_response("好的")
+        r = client.post(
+            "/chat",
+            json={"messages": [{"role": "user", "content": "看看"}], "images": [IMG_URI]},
+        )
+    assert r.status_code == 200
+    create = mock_get.return_value.chat.completions.create
+    last_user = [m for m in create.call_args.kwargs["messages"] if m["role"] == "user"][-1]
+    assert "暂时无法解析" in last_user["content"]
+
+
+def test_chat_with_invalid_image_dropped(client):
+    """非法 data URI 不进入 LLM 上下文，聊天仍 200"""
+    with patch("routers.chat.describe_images", return_value="（图片内容暂时无法解析）"), \
+         patch("agent.chat._get_client") as mock_get:
+        mock_get.return_value.chat.completions.create.return_value = _make_plain_response("你好")
+        r = client.post(
+            "/chat",
+            json={
+                "messages": [{"role": "user", "content": "看图"}],
+                "images": ["data:text/plain;base64,xxx"],
+            },
+        )
+    assert r.status_code == 200
+    blob = str(mock_get.return_value.chat.completions.create.call_args.kwargs["messages"])
+    assert "data:text" not in blob
+    assert "data:image" not in blob
+
+
+def test_chat_images_too_many_422(client):
+    """10 张图 → 422（数量校验）"""
+    r = client.post(
+        "/chat",
+        json={"messages": [{"role": "user", "content": "hi"}], "images": [IMG_URI] * 10},
+    )
+    assert r.status_code == 422
+
+
+def test_chat_stream_with_images(client):
+    """流式带图：SSE 正常、DB 存标记、LLM 收描述"""
+    headers = {"X-Guest-ID": "guest-img-1"}
+    stream = _FakeStream([
+        _make_stream_chunk("收到"),
+        _make_stream_chunk("图片", finish_reason="stop"),
+    ])
+    with patch("routers.chat.describe_images", return_value="一只猫") as mdesc, \
+         patch("agent.chat._get_client") as mock_get:
+        mock_get.return_value.chat.completions.create.return_value = stream
+        r = client.post(
+            "/chat/stream",
+            headers=headers,
+            json={"messages": [{"role": "user", "content": "看猫"}], "images": [IMG_URI]},
+        )
+    assert r.status_code == 200
+    text = r.text
+    assert "event: delta" in text and "event: done" in text
+    assert "event: error" not in text
+    mdesc.assert_awaited_once()
+
+    m = re.search(r'"conversation_id":\s*"([^"]+)"', text)
+    assert m
+    conv_id = m.group(1)
+    detail = client.get(f"/conversations/{conv_id}", headers=headers).json()
+    user_contents = [msg["content"] for msg in detail["messages"] if msg["role"] == "user"]
+    assert any("[图片]" in c and IMG_B64 in c for c in user_contents)
